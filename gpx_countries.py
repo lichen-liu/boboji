@@ -12,7 +12,7 @@ import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from functools import lru_cache
-from itertools import chain, takewhile
+from itertools import chain, islice, takewhile
 from pathlib import Path
 from statistics import median
 from typing import Optional
@@ -308,6 +308,105 @@ def gps_border_radius(previous, following, gap, max_minutes, override):
     return upper_fence(errors) if override is None else override / 1000
 
 
+def denoise_borders(profiles, fixes, rejected, support, stable, lookup, report, coastal_only=False):
+    """Correct border labels; later passes only fill still-unassigned gaps."""
+    gps_radius_meters = report["gps_radius_meters"]
+    gps_max_minutes, gps_max_points = report["gps_max_minutes"], report["gps_max_points"]
+    distance_to = getattr(lookup, "distance_to", None)
+    changed = 0
+    proposals, depths = defaultdict(dict), {}
+    for sequence, p in profiles.items():
+        if not p["fitted"]:
+            continue
+        path = [fix for fix in p["fixes"] if fix not in rejected]
+        runs = []
+        for fix in path:
+            if not runs or runs[-1][0].country != fix.country:
+                runs.append([fix])
+            else:
+                runs[-1].append(fix)
+        for previous, middle, following in zip(runs, runs[1:], runs[2:]):
+            a, b = previous[-1], following[0]
+            country = a.country
+            if coastal_only and middle[0].country is not None:
+                continue
+            if country is None or b.country != country or distance_to is None:
+                continue
+            # Include the bracketing samples in the time bound: a single fix
+            # after a long gap is not evidence of a very short excursion.
+            if len(middle) > gps_max_points or (b.time - a.time).total_seconds() > gps_max_minutes * 60:
+                continue
+            predicted = [interpolate(a, b, fix.time) for fix in middle]
+            predicted_countries = [lookup(fix.latitude, fix.longitude) for fix in predicted]
+            coastal = middle[0].country is None
+            # A coherent crossing supported by the bridge should survive even
+            # if it is brief. A near-coast unmatched gap may also have an
+            # unmatched bridge; both must stay inside the same distance budget.
+            if (coastal and any(label not in (country, None) for label in predicted_countries)) or (
+                    not coastal and predicted_countries.count(country) <= len(middle) / 2):
+                continue
+            def bridge_near(radius):
+                return all(label == country or (coastal and label is None and
+                           distance_to(fix.latitude, fix.longitude, country, radius + 1e-6) <= radius + 1e-6)
+                           for fix, label in zip(predicted, predicted_countries))
+            radii = []
+            override = gps_radius_meters / 1000 if gps_radius_meters is not None else None
+            raw_previous = list(reversed(list(islice(
+                (fix for fix in reversed(previous) if lookup(fix.latitude, fix.longitude) == country), 8))))
+            raw_following = list(islice(
+                (fix for fix in following if lookup(fix.latitude, fix.longitude) == country), 8))
+            radius = gps_border_radius(raw_previous, raw_following, p["gap"], gps_max_minutes, gps_radius_meters)
+            if radius is not None:
+                radii.append(radius)
+            elif override is not None and (a in stable or b in stable):
+                radii.append(override)
+            # Retain the existing one-interval rule when a side supplies stable
+            # country support and every interpolated position agrees. This also
+            # avoids flipping both sides of an unsupported A/B/A/B oscillation.
+            strict_radius = p["error"] if override is None else override
+            if (max(len(previous), len(following)) >= 5
+                    and (middle[-1].time - middle[0].time).total_seconds() <= p["cadence"]
+                    and (middle[0].time - a.time).total_seconds() <= p["gap"]
+                    and (b.time - middle[-1].time).total_seconds() <= p["gap"]
+                    and bridge_near(strict_radius)
+                    and all(distance(fix, estimate) <= strict_radius + 1e-6 for fix, estimate in zip(middle, predicted))):
+                radii.append(strict_radius)
+            for radius in dict.fromkeys(radii):
+                report["gps_radii"].append(radius * 1000)
+                if coastal and not bridge_near(radius):
+                    continue
+                distances = [distance_to(fix.latitude, fix.longitude, country, radius + 1e-6) for fix in middle]
+                if max(distances) <= radius + 1e-6:
+                    for fix in middle:
+                        proposals[fix][sequence] = country
+                    depths.update(zip(middle, distances))
+                    break
+    labels = {fix: fix.country for fix in fixes}
+    for fix, votes in proposals.items():
+        countries = set(votes.values())
+        if len(countries) == 1:
+            country = next(iter(countries))
+            conflict = False
+            # Missing context in a short/edge segment is not contrary evidence.
+            # A second source with nearby foreign-country observations is.
+            for sequence in support[fix].difference(votes):
+                p = profiles[sequence]
+                index = bisect_left(p["times"], fix.time)
+                for other in p["fixes"][max(0, index - 8):index + 9]:
+                    if (other is not fix and other not in rejected
+                            and abs((other.time - fix.time).total_seconds()) <= gps_max_minutes * 60
+                            and labels[other] not in (None, country)
+                            and proposals.get(other, {}).get(sequence) != country):
+                        conflict = True
+            if conflict:
+                continue
+            fix.country = country
+            changed += 1
+            report["adjusted"] += fix.count
+            report["max_border_distance_meters"] = max(report["max_border_distance_meters"], depths[fix] * 1000)
+    return changed
+
+
 def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                     gps_max_minutes=10, gps_max_points=5):
     """Return classified fixes and an auditable count of conservative changes.
@@ -412,10 +511,11 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                         and distance(fix, neighbor) > local["error"] + local["speed"] * gap + 1e-6)
             conflicts.append(conflict)
             vote, country = None, a.country
+            predicted_country = lookup(predicted.latitude, predicted.longitude)
             if (not conflict and distance_to is not None and country is not None and country != fix.country
                     and b.country == country and a.time <= fix.time <= b.time
                     and (b.time - a.time).total_seconds() <= gps_max_minutes * 60
-                    and lookup(predicted.latitude, predicted.longitude) == country):
+                    and (predicted_country == country or (fix.country is None and predicted_country is None))):
                 before = list(takewhile(lambda item: item.country == country,
                                         reversed(p["fixes"][max(0, index_in_path - 8):index_in_path])))
                 after = list(takewhile(lambda item: item.country == country,
@@ -427,7 +527,8 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                 if radius is not None:
                     report["gps_radii"].append(radius * 1000)
                     depth = distance_to(fix.latitude, fix.longitude, country, radius + 1e-6)
-                    if depth <= radius + 1e-6:
+                    if (depth <= radius + 1e-6 and (predicted_country == country or
+                            distance_to(predicted.latitude, predicted.longitude, country, radius + 1e-6) <= radius + 1e-6)):
                         vote = country, depth
             border_votes.append(vote)
         if conflicts and all(conflicts):
@@ -439,63 +540,11 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
             report["max_border_distance_meters"] = max(report["max_border_distance_meters"],
                                                        max(vote[1] for vote in border_votes) * 1000)
 
-    proposals, depths = defaultdict(dict), {}
-    for sequence, p in profiles.items():
-        if not p["fitted"]:
-            continue
-        path = [fix for fix in p["fixes"] if fix not in rejected]
-        runs = []
-        for fix in path:
-            if not runs or runs[-1][0].country != fix.country:
-                runs.append([fix])
-            else:
-                runs[-1].append(fix)
-        for previous, middle, following in zip(runs, runs[1:], runs[2:]):
-            a, b = previous[-1], following[0]
-            country = a.country
-            if country is None or b.country != country or distance_to is None:
-                continue
-            # Include the bracketing samples in the time bound: a single fix
-            # after a long gap is not evidence of a very short excursion.
-            if len(middle) > gps_max_points or (b.time - a.time).total_seconds() > gps_max_minutes * 60:
-                continue
-            predicted = [interpolate(a, b, fix.time) for fix in middle]
-            # A coherent crossing supported by the bridge should survive even
-            # if it is brief. A majority must support the previous country.
-            if sum(lookup(fix.latitude, fix.longitude) == country for fix in predicted) <= len(middle) / 2:
-                continue
-            radii = []
-            override = gps_radius_meters / 1000 if gps_radius_meters is not None else None
-            radius = gps_border_radius(previous, following, p["gap"], gps_max_minutes, gps_radius_meters)
-            if radius is not None:
-                radii.append(radius)
-            elif override is not None and (a in stable or b in stable):
-                radii.append(override)
-            # Retain the existing one-interval rule when a side supplies stable
-            # country support and every interpolated position agrees. This also
-            # avoids flipping both sides of an unsupported A/B/A/B oscillation.
-            strict_radius = p["error"] if override is None else override
-            if (max(len(previous), len(following)) >= 5
-                    and (middle[-1].time - middle[0].time).total_seconds() <= p["cadence"]
-                    and (middle[0].time - a.time).total_seconds() <= p["gap"]
-                    and (b.time - middle[-1].time).total_seconds() <= p["gap"]
-                    and all(lookup(fix.latitude, fix.longitude) == country for fix in predicted)
-                    and all(distance(fix, estimate) <= strict_radius + 1e-6 for fix, estimate in zip(middle, predicted))):
-                radii.append(strict_radius)
-            for radius in dict.fromkeys(radii):
-                report["gps_radii"].append(radius * 1000)
-                distances = [distance_to(fix.latitude, fix.longitude, country, radius + 1e-6) for fix in middle]
-                if max(distances) <= radius + 1e-6:
-                    for fix in middle:
-                        proposals[fix][sequence] = country
-                    depths.update(zip(middle, distances))
-                    break
-    for fix, votes in proposals.items():
-        countries = set(votes.values())
-        if set(votes) == support[fix] and len(countries) == 1:
-            fix.country = countries.pop()
-            report["adjusted"] += fix.count
-            report["max_border_distance_meters"] = max(report["max_border_distance_meters"], depths[fix] * 1000)
+    changed = denoise_borders(profiles, fixes, rejected, support, stable, lookup, report)
+    # Filling one coastal gap can supply context for its neighbor. These later
+    # passes only change None to a country, so they cannot oscillate labels.
+    while changed:
+        changed = denoise_borders(profiles, fixes, rejected, support, stable, lookup, report, coastal_only=True)
     return [fix for fix in fixes if fix not in rejected], report
 
 

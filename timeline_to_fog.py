@@ -10,15 +10,15 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 from xml.etree import ElementTree as ET
 
 
 class Point(NamedTuple):
     latitude: float
     longitude: float
-    time: datetime | None = None
-    elevation: float | None = None
+    time: Optional[datetime] = None
+    elevation: Optional[float] = None
 
 
 def number(value):

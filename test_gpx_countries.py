@@ -109,17 +109,17 @@ def test_unassigned_periods_break_runs_and_untimed_points_are_unplaced():
     result = script.group_timeline([
         (1, 0, base), (0, 0, base + timedelta(hours=1)),
         (1, 0, base + timedelta(hours=2)), (1, 0, None), (0, 0, None),
-    ], lookup)
+    ], lookup, show_offshore=True)
     periods, total, unassigned, untimed = result
     assert [row[0] for row in periods] == [("Alpha", "AA"), None, ("Alpha", "AA"), ("Alpha", "AA"), None]
     assert all(row[2] is None and row[3] is None for row in periods[-2:])
     assert (total, unassigned, untimed) == (5, 2, 2)
-    table = script.format_timeline(*result, show_offshore=True)
+    table = script.format_timeline(*result)
     assert "Recorded periods: 3" in table and "Untimed: 2" in table
     assert "Untimed points are grouped by country at the end" in table
 
 
-def test_timeline_hides_offshore_by_default_and_preserves_country_periods():
+def test_timeline_excludes_offshore_before_grouping_same_country_points():
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     result = script.group_timeline([
         (1, 0, base), (0, 0, base + timedelta(hours=1)),
@@ -127,12 +127,28 @@ def test_timeline_hides_offshore_by_default_and_preserves_country_periods():
     ], lambda latitude, _longitude: ("Alpha", "AA") if latitude == 1 else None)
     table = script.format_timeline(*result)
     rows = [line.split("|") for line in table.splitlines()[2:] if line.startswith("|")]
-    assert [row[1].strip() for row in rows] == ["Alpha", "Alpha"]
-    assert [row[4].strip() for row in rows] == ["2026-01-01T00:00:00Z", "2026-01-01T02:00:00Z"]
-    assert [row[5].strip() for row in rows] == [row[4].strip() for row in rows]
-    assert "Recorded periods: 2" in table and "Input GPX points: 4" in table
-    assert "Hidden unassigned/offshore rows: 2 · Points: 2" in table
+    assert [row[1].strip() for row in rows] == ["Alpha"]
+    assert rows[0][3].strip() == "2"
+    assert rows[0][4].strip() == "2026-01-01T00:00:00Z"
+    assert rows[0][5].strip() == "2026-01-01T02:00:00Z"
+    assert rows[0][6].strip() == "2:00:00"
+    assert "Recorded periods: 1" in table and "Input GPX points: 4" in table
+    assert "Unassigned/offshore points excluded before grouping: 2" in table
     assert "Untimed points are grouped" not in table
+
+
+def test_offshore_filter_merges_gaps_but_other_countries_still_split_returns():
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    lookup = script.country_lookup(country_data())
+    points = [(2, 2, base), (5, 5, base + timedelta(hours=1)),
+              (2, 2, base + timedelta(hours=2)), (1, 21, base + timedelta(hours=3)),
+              (5, 5, base + timedelta(hours=4)), (2, 2, base + timedelta(hours=5))]
+    periods, total, unassigned, untimed = script.group_timeline(reversed(points), lookup)
+    assert [period[0] for period in periods] == [("Alpha", "AA"), ("Beta", "BB"), ("Alpha", "AA")]
+    assert [period[1] for period in periods] == [2, 1, 1]
+    assert periods[0][2:] == [base, base + timedelta(hours=2)]
+    assert periods[2][2:] == [base + timedelta(hours=5), base + timedelta(hours=5)]
+    assert (total, unassigned, untimed) == (6, 2, 0)
 
 
 def test_timeline_with_only_offshore_points_displays_no_country_rows():
@@ -141,11 +157,11 @@ def test_timeline_with_only_offshore_points_displays_no_country_rows():
     table = script.format_timeline(*result)
     assert len([line for line in table.splitlines() if line.startswith("|")]) == 2
     assert "Countries/territories: 0" in table and "Recorded periods: 0" in table
-    assert "Hidden unassigned/offshore rows: 1 · Points: 1" in table
+    assert "Unassigned/offshore points excluded before grouping: 1" in table
 
 
 @pytest.mark.parametrize("flags, expected", [
-    (["--timeline"], ["Alpha", "Alpha"]),
+    (["--timeline"], ["Alpha"]),
     (["--timeline", "--show-offshore"], ["Alpha", "Unassigned / offshore", "Alpha"]),
 ])
 def test_timeline_offshore_flag(tmp_path, capsys, flags, expected):

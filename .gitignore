@@ -2,9 +2,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
-dist/
-build/
-*.egg-info/
 .DS_Store
 .env
 .env.*
@@ -17,6 +14,7 @@ tunnel-token
 # Personal exports and generated tracks belong outside version control.
 data/
 output/
+var/
 *.gpx
 *.kml
 *.kmz

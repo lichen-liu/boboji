@@ -114,9 +114,59 @@ def test_unassigned_periods_break_runs_and_untimed_points_are_unplaced():
     assert [row[0] for row in periods] == [("Alpha", "AA"), None, ("Alpha", "AA"), ("Alpha", "AA"), None]
     assert all(row[2] is None and row[3] is None for row in periods[-2:])
     assert (total, unassigned, untimed) == (5, 2, 2)
-    table = script.format_timeline(*result)
+    table = script.format_timeline(*result, show_offshore=True)
     assert "Recorded periods: 3" in table and "Untimed: 2" in table
     assert "Untimed points are grouped by country at the end" in table
+
+
+def test_timeline_hides_offshore_by_default_and_preserves_country_periods():
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    result = script.group_timeline([
+        (1, 0, base), (0, 0, base + timedelta(hours=1)),
+        (1, 0, base + timedelta(hours=2)), (0, 0, None),
+    ], lambda latitude, _longitude: ("Alpha", "AA") if latitude == 1 else None)
+    table = script.format_timeline(*result)
+    rows = [line.split("|") for line in table.splitlines()[2:] if line.startswith("|")]
+    assert [row[1].strip() for row in rows] == ["Alpha", "Alpha"]
+    assert [row[4].strip() for row in rows] == ["2026-01-01T00:00:00Z", "2026-01-01T02:00:00Z"]
+    assert [row[5].strip() for row in rows] == [row[4].strip() for row in rows]
+    assert "Recorded periods: 2" in table and "Input GPX points: 4" in table
+    assert "Hidden unassigned/offshore rows: 2 · Points: 2" in table
+    assert "Untimed points are grouped" not in table
+
+
+def test_timeline_with_only_offshore_points_displays_no_country_rows():
+    time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    result = script.group_timeline([(0, 0, time)], lambda *_: None)
+    table = script.format_timeline(*result)
+    assert len([line for line in table.splitlines() if line.startswith("|")]) == 2
+    assert "Countries/territories: 0" in table and "Recorded periods: 0" in table
+    assert "Hidden unassigned/offshore rows: 1 · Points: 1" in table
+
+
+@pytest.mark.parametrize("flags, expected", [
+    (["--timeline"], ["Alpha", "Alpha"]),
+    (["--timeline", "--show-offshore"], ["Alpha", "Unassigned / offshore", "Alpha"]),
+])
+def test_timeline_offshore_flag(tmp_path, capsys, flags, expected):
+    boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
+    boundaries.write_text(json.dumps(country_data()))
+    source.write_bytes(gpx('''
+        <wpt lat="2" lon="2"><time>2026-01-01T00:00:00Z</time></wpt>
+        <wpt lat="5" lon="5"><time>2026-01-01T01:00:00Z</time></wpt>
+        <wpt lat="2" lon="2"><time>2026-01-01T02:00:00Z</time></wpt>
+    '''))
+    assert script.main([str(source), "--country-data", str(boundaries), *flags]) == 0
+    output = capsys.readouterr().out
+    assert [line.split("|")[1].strip() for line in output.splitlines()[2:] if line.startswith("|")] == expected
+
+
+@pytest.mark.parametrize("view", [[], ["--summary"]])
+def test_show_offshore_requires_timeline(view, capsys):
+    with pytest.raises(SystemExit) as error:
+        script.main(["missing.gpx", "--show-offshore", *view])
+    assert error.value.code == 2
+    assert "requires --timeline" in capsys.readouterr().err
 
 
 def test_all_untimed_points_have_no_invented_period_or_span():

@@ -25,14 +25,17 @@ first/last recorded timestamps (UTC):
 ```sh
 python3 gpx_countries.py history.gpx
 python3 gpx_countries.py history.gpx --summary
-python3 gpx_countries.py history.gpx --chronological
+python3 gpx_countries.py history.gpx --timeline
 python3 gpx_countries.py history.gpx > var/visited_countries.md
 ```
 
 The default view and `--summary` show one row per country in alphabetical order.
-`--chronological` orders those rows by each country's first recorded UTC
-timestamp, earliest first. Countries without timestamps and unassigned points
-appear last. Both views retain one summary row per country.
+`--timeline` sorts GPX points by UTC timestamp, then groups consecutive points
+in the same country into a row with begin, end, recorded span, and point count.
+Returns start new rows: Canada → Peru → Canada produces three rows. Unassigned
+points form their own periods; untimed points are grouped by country at the end.
+Spans run from the first to last recorded point in each period and can include
+sampling gaps. The timeline flag replaces `--chronological`.
 
 The first run downloads public [Natural Earth country boundaries](https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/)
 into the ignored `var/` folder beside the script; later runs work offline.

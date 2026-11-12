@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import io
 import json
 import shutil
@@ -80,50 +80,85 @@ def test_table_keeps_fractional_precision_and_groups_large_counts():
     assert "1,234" in table and "2026-01-01T12:34:56.1234Z" in table
 
 
-def test_chronological_summary_uses_first_time_with_stable_ties_and_undated_last():
-    earlier = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    later = datetime(2026, 1, 3, tzinfo=timezone.utc)
-    stats = {
-        ("Alpha", "AA"): [1, later, later],
-        ("Gamma", "GG"): [1, None, None],
-        ("Delta", "DD"): [1, earlier, earlier],
-        ("Beta", "BB"): [1, earlier, later],
-        None: [1, datetime(2025, 1, 1, tzinfo=timezone.utc), earlier],
-    }
-    summary = script.format_table(stats, 5, 1)
-    chronology = script.format_table(stats, 5, 1, chronological=True)
-    assert [line.split("|")[1].strip() for line in summary.splitlines()[2:7]] == [
-        "Alpha", "Beta", "Delta", "Gamma", "Unassigned / offshore",
-    ]
-    assert [line.split("|")[1].strip() for line in chronology.splitlines()[2:7]] == [
-        "Beta", "Delta", "Alpha", "Gamma", "Unassigned / offshore",
-    ]
-    assert "Countries/territories: 4" in chronology
-    assert "Ordered by first recorded UTC timestamp" in chronology
+def test_timeline_sorts_points_and_gives_each_return_its_own_period():
+    countries = {1: ("Canada", "CA"), 2: ("Peru", "PE"), 3: ("United States", "US"),
+                 4: ("Japan", "JP"), 5: ("China", "CN")}
+    sequence = [1, 2, 1, 3, 4, 1, 5, 4, 5]
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    points = []
+    for index, country in enumerate(sequence):
+        begin = base + timedelta(days=index * 4)
+        points += [(country, 0, begin), (country, 0, begin + timedelta(days=1, hours=3, minutes=15))]
+    periods, total, unassigned, untimed = script.group_timeline(
+        reversed(points), lambda latitude, _longitude: countries[latitude]
+    )
+    assert [period[0] for period in periods] == [countries[value] for value in sequence]
+    assert [period[1] for period in periods] == [2] * 9
+    assert periods[0][2] == base
+    assert periods[0][3] == base + timedelta(days=1, hours=3, minutes=15)
+    assert total == 18 and unassigned == untimed == 0
+    table = script.format_timeline(periods, total, unassigned, untimed)
+    assert table.count("| Canada") == 3 and table.count("| China") == 2
+    assert "Begin (UTC)" in table and "End (UTC)" in table
+    assert "1 day, 3:15:00" in table and "Recorded periods: 9" in table
 
 
-@pytest.mark.parametrize("flags, first_country", [
-    ([], "Alpha"), (["--summary"], "Alpha"), (["--chronological"], "Beta"),
+def test_unassigned_periods_break_runs_and_untimed_points_are_unplaced():
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    lookup = lambda latitude, _longitude: ("Alpha", "AA") if latitude == 1 else None
+    result = script.group_timeline([
+        (1, 0, base), (0, 0, base + timedelta(hours=1)),
+        (1, 0, base + timedelta(hours=2)), (1, 0, None), (0, 0, None),
+    ], lookup)
+    periods, total, unassigned, untimed = result
+    assert [row[0] for row in periods] == [("Alpha", "AA"), None, ("Alpha", "AA"), ("Alpha", "AA"), None]
+    assert all(row[2] is None and row[3] is None for row in periods[-2:])
+    assert (total, unassigned, untimed) == (5, 2, 2)
+    table = script.format_timeline(*result)
+    assert "Recorded periods: 3" in table and "Untimed: 2" in table
+    assert "Untimed points are grouped by country at the end" in table
+
+
+def test_all_untimed_points_have_no_invented_period_or_span():
+    result = script.group_timeline([(1, 0, None), (1, 0, None)], lambda *_: ("Alpha", "AA"))
+    assert result[0] == [[("Alpha", "AA"), 2, None, None]]
+    table = script.format_timeline(*result)
+    assert "Recorded periods: 0" in table and "Untimed: 2" in table
+    assert table.splitlines()[2].count("—") == 3
+
+
+@pytest.mark.parametrize("flags, expected", [
+    ([], ["Alpha", "Beta"]), (["--summary"], ["Alpha", "Beta"]),
+    (["--timeline"], ["Alpha", "Beta", "Alpha"]),
 ])
-def test_output_view_flags(tmp_path, capsys, flags, first_country):
+def test_output_view_flags(tmp_path, capsys, flags, expected):
     boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
     boundaries.write_text(json.dumps(country_data()))
     source.write_bytes(gpx('''
         <wpt lat="2" lon="2"><time>2026-01-03T00:00:00Z</time></wpt>
         <wpt lat="1" lon="21"><time>2026-01-02T00:30:00+02:00</time></wpt>
+        <wpt lat="2" lon="2"><time>2026-01-01T00:00:00Z</time></wpt>
     '''))
     assert script.main([str(source), "--country-data", str(boundaries), *flags]) == 0
     output = capsys.readouterr().out
-    assert output.splitlines()[2].split("|")[1].strip() == first_country
+    rows = [line.split("|")[1].strip() for line in output.splitlines()[2:] if line.startswith("|")]
+    assert rows == expected
     assert "2026-01-01T22:30:00Z" in output
     assert "Countries/territories: 2" in output
 
 
-def test_summary_and_chronological_flags_are_mutually_exclusive(capsys):
+def test_summary_and_timeline_flags_are_mutually_exclusive(capsys):
     with pytest.raises(SystemExit) as error:
-        script.main(["missing.gpx", "--summary", "--chronological"])
+        script.main(["missing.gpx", "--summary", "--timeline"])
     assert error.value.code == 2
     assert "not allowed" in capsys.readouterr().err
+
+
+def test_chronological_flag_has_been_renamed(capsys):
+    with pytest.raises(SystemExit) as error:
+        script.main(["missing.gpx", "--chronological"])
+    assert error.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("body", [

@@ -80,6 +80,52 @@ def test_table_keeps_fractional_precision_and_groups_large_counts():
     assert "1,234" in table and "2026-01-01T12:34:56.1234Z" in table
 
 
+def test_chronological_summary_uses_first_time_with_stable_ties_and_undated_last():
+    earlier = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    later = datetime(2026, 1, 3, tzinfo=timezone.utc)
+    stats = {
+        ("Alpha", "AA"): [1, later, later],
+        ("Gamma", "GG"): [1, None, None],
+        ("Delta", "DD"): [1, earlier, earlier],
+        ("Beta", "BB"): [1, earlier, later],
+        None: [1, datetime(2025, 1, 1, tzinfo=timezone.utc), earlier],
+    }
+    summary = script.format_table(stats, 5, 1)
+    chronology = script.format_table(stats, 5, 1, chronological=True)
+    assert [line.split("|")[1].strip() for line in summary.splitlines()[2:7]] == [
+        "Alpha", "Beta", "Delta", "Gamma", "Unassigned / offshore",
+    ]
+    assert [line.split("|")[1].strip() for line in chronology.splitlines()[2:7]] == [
+        "Beta", "Delta", "Alpha", "Gamma", "Unassigned / offshore",
+    ]
+    assert "Countries/territories: 4" in chronology
+    assert "Ordered by first recorded UTC timestamp" in chronology
+
+
+@pytest.mark.parametrize("flags, first_country", [
+    ([], "Alpha"), (["--summary"], "Alpha"), (["--chronological"], "Beta"),
+])
+def test_output_view_flags(tmp_path, capsys, flags, first_country):
+    boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
+    boundaries.write_text(json.dumps(country_data()))
+    source.write_bytes(gpx('''
+        <wpt lat="2" lon="2"><time>2026-01-03T00:00:00Z</time></wpt>
+        <wpt lat="1" lon="21"><time>2026-01-02T00:30:00+02:00</time></wpt>
+    '''))
+    assert script.main([str(source), "--country-data", str(boundaries), *flags]) == 0
+    output = capsys.readouterr().out
+    assert output.splitlines()[2].split("|")[1].strip() == first_country
+    assert "2026-01-01T22:30:00Z" in output
+    assert "Countries/territories: 2" in output
+
+
+def test_summary_and_chronological_flags_are_mutually_exclusive(capsys):
+    with pytest.raises(SystemExit) as error:
+        script.main(["missing.gpx", "--summary", "--chronological"])
+    assert error.value.code == 2
+    assert "not allowed" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("body", [
     '<wpt lat="PRIVATE_LOCATION" lon="2"/>', '<wpt lat="nan" lon="2"/>',
     '<wpt lat="91" lon="2"/>', '<wpt lat="2" lon="181"/>', '<wpt lon="2"/>',

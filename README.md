@@ -27,6 +27,8 @@ python3 gpx_countries.py history.gpx
 python3 gpx_countries.py history.gpx --summary
 python3 gpx_countries.py history.gpx --timeline
 python3 gpx_countries.py history.gpx --timeline --denoise
+python3 gpx_countries.py history.gpx --timeline --explain
+python3 gpx_countries.py history.gpx --timeline --no-coastal-denoise
 python3 gpx_countries.py history.gpx --timeline --gps-radius-meters 1000
 python3 gpx_countries.py history.gpx --timeline --no-denoise
 python3 gpx_countries.py history.gpx > var/visited_countries.md
@@ -43,8 +45,9 @@ Spans run from the first to last recorded point in each period and can include
 sampling gaps. The timeline flag replaces `--chronological`.
 Equal-time conflicts retain input order; rows do not resolve which position is true.
 
-`--denoise` is enabled by default in both views. It screens **isolated, gross
-motion outliers** in recorded tracks. A point is excluded only if both incoming
+`--denoise` is enabled by default in both views. It combines coastal country-visit
+continuity with a conservative screen for **isolated, gross motion outliers**
+in recorded tracks. A point is excluded only if both incoming
 and outgoing displacements exceed the configured movement bound, the bypass
 is feasible, and two surrounding observations on each side provide consistent
 context. Turns, stops, detours, changes of transport, short visits, and water
@@ -60,22 +63,38 @@ distinct overlapping recordings are retained when context is insufficient.
 Waypoints and route points remain in the table but are not motion evidence.
 Exact duplicate tracking records preserve counts without adding evidence.
 
-No coastal radius is estimated from road curvature. Optionally supply
-`--gps-radius-meters 1000` to allow approximate country assignment within
-1 km of a polygon. This **mapping tolerance** applies only to unassigned,
-timed tracking points bracketed by the same raw country, with that country the
-only polygon within the radius. Named countries are never rewritten merely
-because a visit is brief. Actual points are checked; no straight route is
-invented, inferred labels never become evidence, and duration/point-count
-cutoffs do not apply. This optional mapping policy can span logging breaks;
-it does not establish continuous presence or prove that a point was on land.
+Coastal handling is **on by default**. When an unassigned gap has the same
+raw country before and after it, the script checks an independent reference
+country polygon. Locations covered by that source reveal disagreement with the baseline
+coastline. Their maximum observed distance,
+rounded up to a metre, supplies a country-specific mapping band. Only actual
+points within that band, with no other country polygon nearby, can join the
+surrounding country visit. Discovery is capped at 10 km; unverified open-water
+points cannot train or enlarge the band. A country with no reference-covered
+locations gets no automatic tolerance.
+
+This resolves coastline mismatches before grouping countries and timestamps.
+Different coordinates at one timestamp do not imply different countries;
+conflicting **named countries** still block country continuity. There is no
+short-visit or sample-count cutoff, and named foreign-country visits remain
+intact. Inferred labels never become evidence for another correction.
+
+`--no-coastal-denoise` disables coastal inference while retaining the motion
+screen. `--no-denoise` restores all raw points and labels. The optional
+`--gps-radius-meters 1000` uses a manual 1 km mapping tolerance instead of
+reference calibration. No radius is estimated from road curvature. An inferred
+country means approximate visit context, including possible nearby water
+excursions; it does not prove that every point was on land or establish GPS
+accuracy. Reference administrative polygons can also include water; coverage
+is not proof of land presence. Coordinates remain unchanged.
 
 The footer distinguishes excluded motion outliers from inferred country labels,
 states the bounds, and reports how many tracking fixes could be checked.
 `--explain` lists each changed record with its timestamp, original country,
 result, and reason. `--no-denoise` shows every raw record and geometric label,
 including when a coastal tolerance was supplied. Small glitches, plausible
-jumps, persistent bias, and unknown accuracy remain unresolved. See the
+jumps, persistent bias, and offshore points outside a supported mapping band
+remain unresolved. See the
 [denoising audit](DENOISING_AUDIT.md) for assumptions, counterexamples, tests,
 and limits. The old `--gps-max-points` / `--gps-max-minutes` heuristics were
 removed because short visits and sparse sampling are not evidence of error.
@@ -91,6 +110,17 @@ stay local. The table reflects recorded points, including transit; it does not
 infer countries between samples. Unmatched points are counted separately; “Unassigned” does not prove offshore.
 Country/territory definitions and approximate borders follow Natural Earth;
 `10m` denotes a 1:10 million map scale, not ten-metre positional accuracy.
+
+Automatic coastal inference downloads smaller per-country reference polygons
+from [geoBoundaries gbOpen](https://www.geoboundaries.org/api.html), produced by
+William & Mary geoLab and contributing boundary providers, pinned to commit
+`9469f09592ced973a3448cf66b6100b741b64c0d`. The collection is CC BY 4.0 compliant;
+[country metadata](https://www.geoboundaries.org/api/current/gbOpen/ALL/ADM0/)
+identifies original sources and licenses. Cached files live under ignored
+`var/coastlines/`, and subsequent runs work offline. Requests contain country
+codes, never GPX coordinates or timestamps. Unavailable references leave
+unsupported gaps visible with a diagnostic. `--country-data` keeps using only
+your local boundaries and never automatically fetches reference data.
 
 `gpx_prune.py` previews points selected for removal, then requires an interactive
 terminal and an explicit `yes` before writing a new GPX. Keep `gpx_countries.py`

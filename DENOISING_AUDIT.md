@@ -3,7 +3,10 @@
 The previous algorithm failed the audit. It could discard ordinary driving
 and relabel a genuine brief border visit. Its automatic “GPS radius” was not
 an identifiable measurement-error estimate. The replacement deliberately
-prioritizes preserving plausible movement over producing a tidy timeline.
+prioritizes preserving plausible movement and resolving country-visit gaps
+from independently checked map geometry. The initial audit revision left
+coastal inference opt-in and consequently failed the default timeline use case.
+The current revision enables reference-calibrated coastal handling by default.
 
 Audited baseline: `fb9c05cbb5ef30b22c800c396e33b677fcadc225`.
 Implementation: `gpx_countries.py`; independent synthetic movement tests:
@@ -16,9 +19,9 @@ Implementation: `gpx_countries.py`; independent synthetic movement tests:
 | High | Deviation from a time-interpolated straight line mixed actual turns, stops, detours, transport changes, GPS error, and map error. It could not estimate GPS accuracy. | Removed interpolation-residual fitting and the automatic border radius. |
 | High | Locally fitted speed/scatter fences could reject a valid faster journey after a long quiet period. Unrelated tracks could train pooled limits. | Use an explicit, broad mixed-travel movement bound; unrelated journeys do not train it. |
 | High | A short, sparse A → B → A sequence near a border was treated as evidence against visiting B. Ordinary border errands satisfy the same conditions. | Never rewrite a named country because of visit duration, sample count, or distance to A. Gross motion exclusions remain possible. |
-| High | Invented straight-line bridges and successive reclassification made geography depend on hypothetical routes and earlier decisions. | Evaluate actual coordinates; optional inference uses immutable raw labels and a single pass. |
+| High | Invented straight-line bridges and successive reclassification made geography depend on hypothetical routes and earlier decisions. | Evaluate actual coordinates; country inference uses immutable raw labels and a single pass. |
 | Medium | Isolated visits, planned routes, duplicate endpoints, and GPX segments were treated like independent GPS evidence. | Motion uses only timed track points. Duplicate records do not vote. Segment boundaries constrain continuity, not source identity. |
-| Medium | Unmatched points were labeled offshore without a water test. The basemap is generalized and lacks a territorial-sea model. | Display “Unassigned”; separate optional approximate mapping from motion errors. |
+| Medium | Unmatched points were labeled offshore without a water test. The basemap is generalized and lacks a territorial-sea model. | Display “Unassigned”; separate approximate country-visit mapping from motion errors. |
 | Medium | Output emphasized removed counts without explaining individual decisions or coverage. | Report the configured assumptions, checked fixes, conflicts, exclusions, and inferred labels; `--explain` lists every change. |
 
 ## Movement assumptions
@@ -100,28 +103,55 @@ counts without increasing evidence. Exact duplicate tracks are recognized;
 partially overlapping tracks are conservatively left unresolved. Conflicts
 are barriers, not opportunities to pick the majority.
 
-### Optional: approximate coastal mapping
+### Default: reference-calibrated coastal visit continuity
 
-Without an explicit `--gps-radius-meters R`, no country tolerance is assumed.
-This existing argument now means a **mapping tolerance**, not a GPS accuracy
-estimate. It can infer a label for a retained, timed, raw-unassigned track
-point only when:
+A speed-outlier screen cannot resolve a coastline mismatch: a stationary hotel,
+ordinary road, or boat can lie outside a generalized country polygon without
+requiring impossible motion. Disabling coastal inference therefore did not
+resolve the original fragmented timeline. The correction now uses an
+independent source of geographic evidence rather than fitting road curvature.
 
-- the same raw country brackets it in chronological tracking observations;
-- no conflicting timestamp interrupts that country context; and
-- that country is the sole polygon within `R` of the actual point.
+1. Find timed, raw-unassigned tracking observations bracketed by the same raw
+   named country. Only disagreement between **named country labels** breaks
+   country context. Distinct coordinates at a timestamp remain a motion
+   ambiguity, but can agree on country. Missing country labels are not evidence
+   of a competing country.
+2. Discover candidates within 10 km of that country's baseline polygon, with
+   no second country within that neighborhood. This ceiling limits the scope
+   of automatic mapping inference; it is not a GPS accuracy claim.
+3. Load the country's pinned, cached independent
+   [geoBoundaries gbOpen reference geometry](https://www.geoboundaries.org/api.html).
+   This independent polygon identifies candidate locations covered by a second
+   country boundary source. Administrative coverage is not necessarily land-only.
+4. Compute the maximum baseline-polygon distance at those reference-covered
+   locations, rounded up to a metre. This observed mapping disagreement supplies
+   the automatic band. No reference-covered location means no automatic band.
+   Unverified offshore points and inferred labels never calibrate it;
+   duplicates cannot enlarge it.
+5. Assign the surrounding country only to actual points within that band and
+   with no other baseline country within it. Keep named countries unchanged.
 
-It never rewrites an existing named country. It does not invent a route, infer
-missing positions, use inferred labels as anchors, or require a visit to be
-short or sparsely sampled. Geographic proximity does not depend on GPX segment
-count or whether a coastal stay lasted overnight. Context can therefore span
-logging breaks, but does not establish continuous presence.
+This classifies approximate **country-visit context**, without changing or
+removing coordinates. Some nearshore water excursions may join a country visit;
+that is not a claim of continuous land presence or a measured GPS correction.
+A substantial offshore excursion beyond the supported band remains unassigned.
+The band depends on observed reference-map coverage and is not a calibrated
+confidence interval. A country's maximum observed disagreement may be a broad
+allowance for a more accurate part of its coastline; proximity, bracketing,
+uniqueness, and the discovery ceiling constrain that inference.
 
-A nearshore boat and a biased coastal hotel observation can be identical in
-GPX. This option may give either an approximate country label; it does not
-prove land presence or classify either as noise. Raw labels remain available
-with `--no-denoise` and in explanations. The old `--gps-max-points` and
-`--gps-max-minutes` options were removed along with their unsupported rules.
+The reference dataset is pinned to
+`9469f09592ced973a3448cf66b6100b741b64c0d`, uses the smaller country polygons,
+and caches downloads in ignored `var/coastlines/`. Country-code requests do not
+include GPX coordinates or timestamps. Failed references leave unsupported gaps
+visible. Custom `--country-data` stays offline. Collection and original-source
+attribution links are in the README; boundary data is not committed to this repo.
+
+`--no-coastal-denoise` disables this stage. `--gps-radius-meters R` supplies a
+manual mapping band instead of reference calibration, without fetching reference
+geometry. `--no-denoise` disables all analysis changes. The old
+`--gps-max-points` and `--gps-max-minutes` remain removed: duration and sample
+count alone do not establish country membership or sensor error.
 
 ## Geography and implementation checks
 
@@ -155,7 +185,7 @@ denoised display labels never authorize deleting points.
 Run `python3 -m pytest -q`. The movement fixtures have independently generated
 truth from forward geodesics. Noise is added afterward; generation does not
 call the denoiser's distance, interpolation, or country rules.
-The complete suite passes **805 tests** locally on Python 3.9, 3.14, and 3.15;
+The complete suite passes **827 tests** locally on Python 3.9, 3.14, and 3.15;
 repository CI also requires Python 3.13.
 
 | Synthetic experiment | Previous algorithm | Replacement |
@@ -182,6 +212,11 @@ duplicate multiplicity, unrelated days, input order, simultaneous conflicts,
 overlapping tracks, sparse context, error bursts, waypoint/track duplicates,
 raw opt-out, optional coastal distance thresholds, ambiguous nearby countries,
 long coastal stays, segment changes, and immutable raw country references.
+Follow-up tests independently vary coarse and reference coastlines, preserve
+unknowns beyond observed map disagreement, prevent unverified points from
+training the band, handle same-time positions without inventing country
+conflicts, verify download/cache failures, and exercise automatic handling via
+the normal CLI without additional flags.
 Existing parsing, standalone execution, privacy, converter, and pruner checks
 remain. Tests that demanded unsupported deletions/relabeling were replaced
 with movement truth and explicit abstention cases.
@@ -196,12 +231,12 @@ truth, and is not used for tuning. No private data enters this report or CI.
 
 The default screen will miss plausible-speed GPS drift, small border jitter,
 coherent error bursts, isolated inferred Google visits, and persistent bias.
-It may leave a fragmented timeline rather than erase a legitimate ferry or
-brief visit. Correcting those cases reliably needs additional evidence, such
+Country inference can still leave gaps beyond its supported map band; named
+brief visits remain visible. Correcting those cases reliably needs additional evidence, such
 as source-specific accuracy/provenance, an appropriate road model with known
 transport mode, better coastline geometry, or reviewed labels.
 
-Neither the replacement nor the optional mapping tolerance establishes a
+Neither motion screening nor inferred country-visit context establishes a
 continuous stay, legal country presence, territorial waters, or a calibrated
 probability. Timestamps, source identity, basemap quality, and the selected
 movement bounds remain explicit assumptions. Unknowns are retained for review.

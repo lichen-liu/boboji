@@ -238,23 +238,27 @@ def group_timeline(points, lookup):
     return periods, total, unassigned, untimed
 
 
-def format_timeline(periods, total, unassigned, untimed):
+def format_timeline(periods, total, unassigned, untimed, *, show_offshore=False):
     headers = ("Country / territory", "Code", "GPX points", "Begin (UTC)", "End (UTC)", "Recorded span")
+    visible = [period for period in periods if show_offshore or period[0] is not None]
     rows = []
-    for country, count, begin, end in periods:
+    for country, count, begin, end in visible:
         name, code = country or ("Unassigned / offshore", "—")
         span = str(end - begin) if begin is not None else "—"
         if "." in span:
             span = span.rstrip("0")
         rows.append((name, code, f"{count:,}", timestamp(begin), timestamp(end), span))
-    countries = {country for country, _, _, _ in periods if country is not None}
-    timed_periods = sum(begin is not None for _, _, begin, _ in periods)
+    countries = {country for country, _, _, _ in visible if country is not None}
+    timed_periods = sum(begin is not None for _, _, begin, _ in visible)
     lines = [text_table(headers, rows), "",
              f"Countries/territories: {len(countries)} · Recorded periods: {timed_periods:,}",
-             f"GPX points: {total:,} · Unassigned: {unassigned:,} · Untimed: {untimed:,}",
+             f"Input GPX points: {total:,} · Unassigned: {unassigned:,} · Untimed: {untimed:,}",
              "Rows group consecutive countries after sorting UTC timestamps; returns start new rows.",
              "Recorded span = end minus begin, based on samples; continuous presence is not implied."]
-    if untimed:
+    if len(visible) < len(periods):
+        lines.append(f"Hidden unassigned/offshore rows: {len(periods) - len(visible):,} · Points: {unassigned:,}. "
+                     "Country period begin/end timestamps are preserved.")
+    if any(begin is None for _, _, begin, _ in visible):
         lines.append("Untimed points are grouped by country at the end; — = no recorded timestamp.")
     return "\n".join(lines)
 
@@ -268,8 +272,12 @@ def main(argv=None):
                       help="show country periods from oldest to newest, including return visits")
     view.add_argument("--summary", dest="timeline", action="store_false",
                       help="show the alphabetical country summary (default)")
+    parser.add_argument("--show-offshore", action="store_true",
+                        help="include unassigned/offshore rows in timeline view (hidden by default)")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
+    if args.show_offshore and not args.timeline:
+        parser.error("--show-offshore requires --timeline")
     try:
         with args.gpx.open("rb") as source:
             points = gpx_points(source)
@@ -280,7 +288,8 @@ def main(argv=None):
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
             if args.timeline:
-                output = format_timeline(*group_timeline(chain((first,), points), lookup))
+                output = format_timeline(*group_timeline(chain((first,), points), lookup),
+                                         show_offshore=args.show_offshore)
             else:
                 output = format_table(*summarize(chain((first,), points), lookup))
         print(output)

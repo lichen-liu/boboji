@@ -26,6 +26,7 @@ first/last recorded timestamps (UTC):
 python3 gpx_countries.py history.gpx
 python3 gpx_countries.py history.gpx --summary
 python3 gpx_countries.py history.gpx --timeline
+python3 gpx_countries.py history.gpx --timeline --show-offshore
 python3 gpx_countries.py history.gpx > var/visited_countries.md
 ```
 
@@ -33,7 +34,9 @@ The default view and `--summary` show one row per country in alphabetical order.
 `--timeline` sorts GPX points by UTC timestamp, then groups consecutive points
 in the same country into a row with begin, end, recorded span, and point count.
 Returns start new rows: Canada → Peru → Canada produces three rows. Unassigned
-points form their own periods; untimed points are grouped by country at the end.
+points form their own periods, which are hidden by default; `--show-offshore`
+includes them. Hiding rows preserves neighboring country periods' begin/end
+timestamps. Untimed points are grouped by country at the end.
 Spans run from the first to last recorded point in each period and can include
 sampling gaps. The timeline flag replaces `--chronological`.
 

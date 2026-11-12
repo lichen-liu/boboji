@@ -15,6 +15,7 @@ from functools import lru_cache
 from itertools import chain
 from pathlib import Path
 from statistics import median
+from typing import Optional
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
@@ -233,8 +234,8 @@ def summarize_labels(points):
 class Fix:
     latitude: float
     longitude: float
-    time: datetime | None
-    country: tuple | None
+    time: Optional[datetime]
+    country: Optional[tuple]
     count: int = 0
     sequences: set = field(default_factory=set)
 

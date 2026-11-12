@@ -27,6 +27,7 @@ python3 gpx_countries.py history.gpx
 python3 gpx_countries.py history.gpx --summary
 python3 gpx_countries.py history.gpx --timeline
 python3 gpx_countries.py history.gpx --timeline --denoise
+python3 gpx_countries.py history.gpx --timeline --gps-radius-meters 1000
 python3 gpx_countries.py history.gpx --timeline --no-denoise
 python3 gpx_countries.py history.gpx > var/visited_countries.md
 ```
@@ -46,25 +47,55 @@ GPX track segment or route using its sampling cadence, speeds, and deviations
 from locally interpolated positions. Nearby path windows refine comparisons
 with isolated fixes. Robust upper fences (the larger of the
 90th percentile or upper quartile plus three interquartile ranges) provide
-empirical limits, rather than fixed minutes, point counts, or kilometres.
+empirical movement and scatter limits.
 Exact duplicate fixes retain their GPX counts but contribute only once to
 fitting. Isolated visits/endpoints that contradict a supported path, and
 isolated path spikes with implausible movement on both sides, can be excluded
 from the report.
 
-Brief boundary excursions can be assigned to the surrounding country only
-when their duration fits the path's sampling cadence, their distance to that
-country fits its estimated position scatter, and interpolation also supports
-that country. This applies to both country switches and offshore points,
-before grouping. Sustained offshore travel, coherent short crossings, long
-gaps, and untimed points retain their observations when there is insufficient
-evidence for a change. Paths with fewer than five distinct timestamps can use
-pooled limits learned from longer paths to detect gross movement conflicts;
+The GPS border filter considers a short switch A → B → A within a track
+segment/route, including an unassigned B. By default, the samples in A
+surrounding the switch must be at most **10 minutes** apart, and B must contain
+at most **5 distinct timestamps**. Every B point must be within the estimated
+GPS radius of A's **polygon**, rather than its centroid. A majority of
+interpolated positions between the surrounding A samples must also support A;
+coherent crossings supported by that bridge remain visible.
+
+The new short/sparse rule's automatic radius uses the same robust upper fence,
+fitted to time-weighted interpolation residuals in stable A observations on
+each side of the switch.
+The suspect run and the bridge across it do not train this threshold. At least
+three eligible residuals are needed for an automatic radius. With an explicit
+radius, a surrounding country run with five distinct timestamps can supply
+context even when a GPX segment has too few local residuals. The earlier
+one-sampling-interval rule also remains, using its per-path scatter bound when
+at least one surrounding country run has five timestamps and every bridge
+position agrees. Unsupported alternating country labels remain uncertain.
+This estimates trajectory scatter, not measured device accuracy or
+a calibrated probability. It can also reflect road curvature and map error.
+
+Use `--gps-radius-meters 1000` to set an explicit 1 km polygon-distance cutoff.
+`--gps-max-minutes` and `--gps-max-points` adjust the time and independent-point
+limits; all conditions must hold. These options affect border reassignment,
+while the existing isolated-conflict and path-spike filters keep their fitted
+movement limits. Corrections happen before both summary and timeline grouping.
+The footer shows the inferred radius range (or override), corrected counts,
+and the farthest corrected point's distance to its previous country polygon.
+An isolated marker can also be reassigned, rather than discarded, when a
+supported path brackets its timestamp in the same country and the polygon
+distance passes this threshold. Other supported paths must agree; a path
+supporting the marker's original country vetoes the correction.
+
+Sustained offshore travel, long gaps, and untimed observations remain visible
+without sufficient evidence for a change. A real brief visit near a border can
+also resemble jitter; compare `--no-denoise` when reviewing uncertain cases.
+Paths with fewer than five distinct timestamps can use pooled limits learned
+from longer paths to detect gross movement conflicts;
 they do not supply their own boundary-uncertainty fit. With no longer paths,
 sparse data stays unchanged. Disagreement between supported sources prevents
 an automatic change. These are conservative empirical rules, not calibrated
-probabilities or proof of a
-visit. GPX segment context is available; original Google activity labels and
+probabilities or proof of a visit. GPX segment context is available; original
+Google activity labels and
 confidence values cannot be recovered from an ordinary GPX file.
 
 The footer reports input counts, excluded points by reason, and adjusted

@@ -1,7 +1,7 @@
 # Boboji
 
 `timeline_to_fog.py` converts Google Maps Timeline JSON into a GPX file for
-Fog of World. It is a standalone Python 3.11+ script using only the standard
+Fog of World. It is a standalone Python 3.9+ script using only the standard
 library. Copy it anywhere and run:
 
 ```sh
@@ -100,7 +100,8 @@ timezone. Untimed points never match a time filter.
 `-o` chooses another new filename. Existing files are never overwritten and the
 input stays unchanged. Remaining tracks/routes are split at removed gaps.
 
-Tests: `python3 -m pip install pytest`, then `python3 -m pytest -q`.
+All scripts support Python 3.9+. Tests: `python3 -m pip install pytest`, then
+`python3 -m pytest -q`. CI tests Python 3.9 and 3.13.
 
 GitHub follows `trip_dollar`: PRs to `main`, up-to-date branches, required
 `pytest (Python 3.13)`, squash/rebase merges only, no bypasses, and no force

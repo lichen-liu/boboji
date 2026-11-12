@@ -2,6 +2,8 @@
 """Print a table of countries/territories represented by recorded GPX points."""
 
 import argparse
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass, field
 import json
 import math
 import shutil
@@ -12,6 +14,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from itertools import chain
 from pathlib import Path
+from statistics import median
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
@@ -105,6 +108,33 @@ def country_lookup(data):
                     return country
         return None
 
+    def near(latitude, longitude, country, radius):
+        # Only inspect edges within the fitted uncertainty radius. Distances use
+        # a local tangent plane, so this is an approximate geometric distance.
+        dy = radius / 111.195
+        sx = 111.195 * math.cos(math.radians(latitude))
+        seen = set()
+        for band in range(max(-90, math.floor(latitude - dy)), min(90, math.floor(latitude + dy)) + 1):
+            for _west, _south, _east, _north, label, edges in rows.get(band, ()):
+                if label != country:
+                    continue
+                for edge in edges:
+                    if edge in seen:
+                        continue
+                    seen.add(edge)
+                    x1, y1, x2, y2 = edge
+                    x1 = (x1 - longitude + 180) % 360 - 180
+                    x2 = x1 + (x2 - edge[0] + 180) % 360 - 180
+                    shift = 360 * round((x1 + x2) / 720)
+                    ax, ay = (x1 - shift) * sx, (y1 - latitude) * 111.195
+                    bx, by = (x2 - shift) * sx, (y2 - latitude) * 111.195
+                    ex, ey = bx - ax, by - ay
+                    fraction = max(0, min(1, -(ax * ex + ay * ey) / (ex * ex + ey * ey))) if ex or ey else 0
+                    if (ax + fraction * ex) ** 2 + (ay + fraction * ey) ** 2 <= radius ** 2:
+                        return True
+        return False
+
+    lookup.near = near
     return lookup
 
 
@@ -139,7 +169,7 @@ def point_info(node, prefix):
     return latitude, longitude, time
 
 
-def gpx_points(source):
+def gpx_samples(source):
     events = ET.iterparse(source, events=("start", "end"))
     try:
         _, root = next(events)
@@ -154,32 +184,242 @@ def gpx_points(source):
     }
     containers = {prefix + name for name in ("trkseg", "trk", "rte")}
     stack = [root]
+    sequences, serial = {}, 0
     for event, node in events:
         if event == "start":
             stack.append(node)
+            if node.tag in (prefix + "trkseg", prefix + "rte"):
+                serial += 1
+                sequences[node] = serial
             continue
         if node.tag in point_tags and tuple(item.tag for item in stack) in point_paths:
-            yield point_info(node, prefix)
+            if node.tag == prefix + "wpt":
+                serial += 1
+                sequence = serial
+            else:
+                sequence = sequences[stack[-2]]
+            yield (*point_info(node, prefix), sequence)
+        sequences.pop(node, None)
         if node.tag in point_tags or node.tag in containers:
             node.clear()
             stack[-2].remove(node)
         stack.pop()
 
 
+def gpx_points(source):
+    for latitude, longitude, time, _sequence in gpx_samples(source):
+        yield latitude, longitude, time
+
+
 def summarize(points, lookup):
+    return summarize_labels((lookup(lat, lon), time, 1) for lat, lon, time in points)
+
+
+def summarize_labels(points):
     countries = {}
     total = unassigned = 0
-    for latitude, longitude, time in points:
-        total += 1
-        country = lookup(latitude, longitude)
-        if country is None:
-            unassigned += 1
+    for country, time, count in points:
+        total += count
+        unassigned += count if country is None else 0
         row = countries.setdefault(country, [0, None, None])
-        row[0] += 1
+        row[0] += count
         if time is not None:
             row[1] = min(row[1], time) if row[1] is not None else time
             row[2] = max(row[2], time) if row[2] is not None else time
     return countries, total, unassigned
+
+
+@dataclass(eq=False)
+class Fix:
+    latitude: float
+    longitude: float
+    time: datetime | None
+    country: tuple | None
+    count: int = 0
+    sequences: set = field(default_factory=set)
+
+
+def distance(first, second):
+    lat1, lat2 = math.radians(first.latitude), math.radians(second.latitude)
+    delta = math.radians(second.longitude - first.longitude)
+    value = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta / 2) ** 2
+    return 12742.0176 * math.asin(math.sqrt(min(1, max(0, value))))
+
+
+def interpolate(first, second, time):
+    fraction = (time - first.time).total_seconds() / (second.time - first.time).total_seconds()
+    longitude = first.longitude + fraction * ((second.longitude - first.longitude + 180) % 360 - 180)
+    return Fix(first.latitude + fraction * (second.latitude - first.latitude),
+               (longitude + 180) % 360 - 180, time, None)
+
+
+def upper_fence(values):
+    """Robust empirical upper bound, without a fixed speed/distance cutoff."""
+    values = sorted(values)
+    def quantile(fraction):
+        index = fraction * (len(values) - 1)
+        lower = math.floor(index)
+        return values[lower] + (values[math.ceil(index)] - values[lower]) * (index - lower)
+    return max(quantile(.9), quantile(.75) + 3 * (quantile(.75) - quantile(.25)))
+
+
+def motion_profile(fixes, fallback=None):
+    # Conflicting locations at one timestamp cannot train a movement model.
+    by_time = defaultdict(list)
+    for fix in fixes:
+        by_time[fix.time].append(fix)
+    fixes = [items[0] for _time, items in sorted(by_time.items()) if len(items) == 1]
+    if len(fixes) < 2 or (len(fixes) < 5 and fallback is None):
+        return None
+    base = {"fixes": fixes, "times": [fix.time for fix in fixes], "fitted": len(fixes) >= 5}
+    if len(fixes) < 5:
+        return {**base, **fallback}
+    gaps = [(b.time - a.time).total_seconds() for a, b in zip(fixes, fixes[1:])]
+    speeds = [distance(a, b) / gap for a, b, gap in zip(fixes, fixes[1:], gaps)]
+    errors = [distance(b, interpolate(a, c, b.time)) for a, b, c in zip(fixes, fixes[1:], fixes[2:])]
+    return {**base,
+            "gap": upper_fence(gaps), "speed": upper_fence(speeds),
+            "error": upper_fence(errors), "cadence": median(gaps)}
+
+
+def denoise_samples(samples, lookup, enabled=True):
+    """Return classified fixes and an auditable count of conservative changes.
+
+    Models are fitted separately to GPX track segments/routes, never to country
+    residence duration. Unsupported observations and sustained transit remain.
+    Exact duplicate fixes retain their GPX count but contribute once to fitting.
+    """
+    if not enabled:
+        fixes = [Fix(lat, lon, time, lookup(lat, lon), 1, {sequence})
+                 for lat, lon, time, sequence in samples]
+        return fixes, {"enabled": False}
+    unique, paths = {}, defaultdict(dict)
+    total = 0
+    for latitude, longitude, time, sequence in samples:
+        total += 1
+        key = latitude, longitude, time
+        fix = unique.get(key)
+        if fix is None:
+            fix = unique[key] = Fix(latitude, longitude, time, lookup(latitude, longitude))
+        fix.count += 1
+        fix.sequences.add(sequence)
+        if time is not None:
+            paths[sequence][key] = fix
+    fixes = list(unique.values())
+    report = {"enabled": enabled, "input": total, "unique": len(fixes),
+              "isolated": 0, "spikes": 0, "adjusted": 0}
+    profiles = {sequence: profile for sequence, items in paths.items()
+                if (profile := motion_profile(items.values())) is not None}
+    report["fitted_paths"] = len(profiles)
+    if profiles:
+        pooled = {key: upper_fence([p[key] for p in profiles.values()])
+                  for key in ("gap", "cadence", "speed", "error")}
+        for sequence, items in paths.items():
+            if sequence not in profiles and (profile := motion_profile(items.values(), pooled)) is not None:
+                profiles[sequence] = profile
+    support, spike_votes = defaultdict(set), defaultdict(set)
+    for sequence, profile in profiles.items():
+        path = profile["fixes"]
+        for fix in path:
+            support[fix].add(sequence)
+        for a, b, c in zip(path, path[1:], path[2:]):
+            left, right = (b.time - a.time).total_seconds(), (c.time - b.time).total_seconds()
+            if max(left, right) > profile["gap"]:
+                continue
+            if (distance(a, b) / left > profile["speed"] + 1e-6
+                    and distance(b, c) / right > profile["speed"] + 1e-6
+                    and distance(a, c) / (left + right) <= profile["speed"]
+                    and distance(b, interpolate(a, c, b.time)) > profile["error"] + 1e-6):
+                spike_votes[b].add(sequence)
+    rejected = {fix for fix, votes in spike_votes.items() if votes == support[fix]}
+    report["spikes"] = sum(fix.count for fix in rejected)
+
+    # Compare isolated visits/endpoints with independently supported paths.
+    supported = sorted(((fix.time, sequence) for sequence, p in profiles.items()
+                        for fix in p["fixes"] if fix not in rejected), key=lambda item: item[0])
+    times = [time for time, _sequence in supported]
+    for fix in fixes:
+        if fix.time is None or fix in rejected or any(len(paths[s]) > 1 for s in fix.sequences):
+            continue
+        index = bisect_left(times, fix.time)
+        neighboring_times = {time for time, _sequence in supported[max(0, index - 2):index + 2]}
+        candidates = {sequence for time in neighboring_times
+                      for _time, sequence in supported[bisect_left(times, time):bisect_right(times, time)]}
+        conflicts = []
+        for sequence in candidates:
+            p = profiles[sequence]
+            index_in_path = bisect_left(p["times"], fix.time)
+            local = motion_profile(p["fixes"][max(0, index_in_path - 6):index_in_path + 7]) or p
+            # Use a nearby regular pair, including a short extrapolation when
+            # the candidate lies just outside a path or within a sampling gap.
+            neighbors = p["fixes"][max(0, index_in_path - 3):index_in_path + 3]
+            pairs = [(a, b) for a, b in zip(neighbors, neighbors[1:])
+                     if a not in rejected and b not in rejected
+                     and (b.time - a.time).total_seconds() <= local["gap"]
+                     and min(abs((fix.time - a.time).total_seconds()),
+                             abs((fix.time - b.time).total_seconds())) <= local["cadence"]]
+            if not pairs:
+                continue
+            a, b = min(pairs, key=lambda pair: max(abs((fix.time - item.time).total_seconds()) for item in pair))
+            gap = min(abs((fix.time - a.time).total_seconds()), abs((fix.time - b.time).total_seconds()))
+            predicted = interpolate(a, b, fix.time)
+            if not -90 <= predicted.latitude <= 90:
+                continue
+            neighbor = min((a, b), key=lambda item: abs((fix.time - item.time).total_seconds()))
+            # Account for both fitted position scatter and possible movement
+            # since the closest supported timestamp (speeds are in km/second).
+            conflicts.append(distance(fix, predicted) > local["error"] + 1e-6
+                             and distance(fix, neighbor) > local["error"] + local["speed"] * gap + 1e-6)
+        if conflicts and all(conflicts):
+            rejected.add(fix)
+            report["isolated"] += fix.count
+
+    near = getattr(lookup, "near", None)
+    proposals = defaultdict(dict)
+    for sequence, p in profiles.items():
+        if not p["fitted"]:
+            continue
+        path = [fix for fix in p["fixes"] if fix not in rejected]
+        runs = []
+        for fix in path:
+            if not runs or runs[-1][0].country != fix.country:
+                runs.append([fix])
+            else:
+                runs[-1].append(fix)
+        for previous, middle, following in zip(runs, runs[1:], runs[2:]):
+            a, b = previous[-1], following[0]
+            country = a.country
+            if country is None or b.country != country or near is None:
+                continue
+            if ((middle[-1].time - middle[0].time).total_seconds() > p["cadence"]
+                    or (middle[0].time - a.time).total_seconds() > p["gap"]
+                    or (b.time - middle[-1].time).total_seconds() > p["gap"]):
+                continue
+            if all(near(fix.latitude, fix.longitude, country, p["error"])
+                   and lookup(predicted.latitude, predicted.longitude) == country
+                   and distance(fix, predicted) <= p["error"] + 1e-6
+                   for fix in middle for predicted in [interpolate(a, b, fix.time)]):
+                for fix in middle:
+                    proposals[fix][sequence] = country
+    for fix, votes in proposals.items():
+        countries = set(votes.values())
+        if set(votes) == support[fix] and len(countries) == 1:
+            fix.country = countries.pop()
+            report["adjusted"] += fix.count
+    return [fix for fix in fixes if fix not in rejected], report
+
+
+def format_denoising(report):
+    if not report["enabled"]:
+        return "Denoising: off; original country assignments and all GPX points are shown."
+    text = (f"Denoising: on · Input GPX points: {report['input']:,} · Distinct observations: {report['unique']:,}\n"
+            f"Excluded GPX points: {report['isolated'] + report['spikes']:,} "
+            f"(isolated conflicts: {report['isolated']:,}; path spikes: {report['spikes']:,}) · "
+            f"Boundary assignments adjusted: {report['adjusted']:,}\n"
+            "Limits use observed cadence, speeds, and position scatter; uncertain/offshore points remain.")
+    if not report["fitted_paths"]:
+        text += "\nInsufficient supported path context; observations left unchanged."
+    return text
 
 
 def timestamp(value):
@@ -213,27 +453,28 @@ def format_table(countries, total, unassigned):
     return "\n".join(lines)
 
 
-def group_timeline(points, lookup, *, show_offshore=False):
+def group_timeline(points, lookup):
+    return group_timeline_labels((lookup(lat, lon), time, 1) for lat, lon, time in points)
+
+
+def group_timeline_labels(points):
     timed, undated = [], defaultdict(int)
     total = unassigned = untimed = 0
-    for latitude, longitude, time in points:
-        country = lookup(latitude, longitude)
-        total += 1
-        unassigned += country is None
-        untimed += time is None
-        if country is None and not show_offshore:
-            continue
+    for country, time, count in points:
+        total += count
+        unassigned += count if country is None else 0
+        untimed += count if time is None else 0
         if time is None:
-            undated[country] += 1
+            undated[country] += count
         else:
-            timed.append((time, country))
+            timed.append((time, country, count))
     timed.sort(key=lambda item: item[0])
     periods = []
-    for time, country in timed:
+    for time, country, count in timed:
         if not periods or periods[-1][0] != country:
-            periods.append([country, 1, time, time])
+            periods.append([country, count, time, time])
         else:
-            periods[-1][1] += 1
+            periods[-1][1] += count
             periods[-1][3] = time
     for country, count in sorted(undated.items(), key=lambda item: (item[0] is None, item[0] or ("", ""))):
         periods.append([country, count, None, None])
@@ -253,11 +494,9 @@ def format_timeline(periods, total, unassigned, untimed):
     timed_periods = sum(begin is not None for _, _, begin, _ in periods)
     lines = [text_table(headers, rows), "",
              f"Countries/territories: {len(countries)} · Recorded periods: {timed_periods:,}",
-             f"Input GPX points: {total:,} · Unassigned: {unassigned:,} · Untimed: {untimed:,}",
+             f"GPX points represented: {total:,} · Unassigned: {unassigned:,} · Untimed: {untimed:,}",
              "Rows group consecutive countries after sorting UTC timestamps; returns start new rows.",
              "Recorded span = end minus begin, based on samples; continuous presence is not implied."]
-    if unassigned and not any(country is None for country, _, _, _ in periods):
-        lines.append(f"Unassigned/offshore points excluded before grouping: {unassigned:,}.")
     if any(begin is None for _, _, begin, _ in periods):
         lines.append("Untimed points are grouped by country at the end; — = no recorded timestamp.")
     return "\n".join(lines)
@@ -272,27 +511,24 @@ def main(argv=None):
                       help="show country periods from oldest to newest, including return visits")
     view.add_argument("--summary", dest="timeline", action="store_false",
                       help="show the alphabetical country summary (default)")
-    parser.add_argument("--show-offshore", action="store_true",
-                        help="include unassigned/offshore points when grouping the timeline (excluded by default)")
+    parser.add_argument("--denoise", action=argparse.BooleanOptionalAction, default=True,
+                        help="filter conflicting observations and smooth supported boundary jitter (default: enabled)")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
-    if args.show_offshore and not args.timeline:
-        parser.error("--show-offshore requires --timeline")
     try:
         with args.gpx.open("rb") as source:
-            points = gpx_points(source)
+            points = gpx_samples(source)
             first = next(points, None)
             if first is None:
                 raise ValueError("GPX contains no track points, route points, or waypoints")
             lookup = country_lookup(load_countries(
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
-            if args.timeline:
-                output = format_timeline(*group_timeline(
-                    chain((first,), points), lookup, show_offshore=args.show_offshore
-                ))
-            else:
-                output = format_table(*summarize(chain((first,), points), lookup))
+            fixes, report = denoise_samples(chain((first,), points), lookup, enabled=args.denoise)
+            labels = ((fix.country, fix.time, fix.count) for fix in fixes)
+            output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
+                      else format_table(*summarize_labels(labels)))
+            output += "\n" + format_denoising(report)
         print(output)
     except (OSError, ValueError, ET.ParseError) as error:
         parser.exit(2, f"error: {error}\n")

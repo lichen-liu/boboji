@@ -1,0 +1,50 @@
+name: Python tests
+
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  pytest:
+    name: pytest (Python 3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project and test dependencies
+        run: python -m pip install -e '.[dev]'
+
+      - name: Run pytest
+        run: python -m pytest -q
+
+      - name: Build and verify the isolated application wheel
+        run: |
+          python -m pip wheel --no-deps --wheel-dir dist .
+          wheel_env="$(mktemp -d)"
+          python -m venv "$wheel_env/venv"
+          "$wheel_env/venv/bin/python" -m pip install --no-deps dist/boboji-*.whl
+          cd "$wheel_env"
+          "$wheel_env/venv/bin/timeline_to_fog" "$GITHUB_WORKSPACE/examples/timeline_example.json" -o example.gpx
+          "$wheel_env/venv/bin/python" -m boboji --version
+          "$wheel_env/venv/bin/python" -c 'import xml.etree.ElementTree as E; r = E.parse("example.gpx").getroot(); assert r.attrib["version"] == "1.1"; assert len(r.findall(".//{http://www.topografix.com/GPX/1/1}trkpt")) == 5'

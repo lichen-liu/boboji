@@ -1,0 +1,19 @@
+{
+  "description": "Synthetic example, not a personal location history",
+  "semanticSegments": [
+    {
+      "startTime": "2026-01-01T12:00:00Z",
+      "endTime": "2026-01-01T12:10:00Z",
+      "timelinePath": [
+        {"point": "51.5000000°, -0.1200000°", "time": "2026-01-01T12:00:00Z"},
+        {"point": "51.5005000°, -0.1205000°", "time": "2026-01-01T12:05:00Z"},
+        {"point": "51.5010000°, -0.1210000°", "time": "2026-01-01T12:10:00Z"}
+      ]
+    },
+    {
+      "startTime": "2026-01-01T13:00:00Z",
+      "endTime": "2026-01-01T13:30:00Z",
+      "visit": {"topCandidate": {"placeLocation": {"latLng": "51.5100000°, -0.1300000°"}}}
+    }
+  ]
+}

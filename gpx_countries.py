@@ -291,6 +291,7 @@ class Fix:
     count: int = 0
     sequences: set = field(default_factory=set)
     raw_country: Optional[tuple] = None
+    reference_country: Optional[tuple] = None
 
 
 def distance(first, second):
@@ -330,7 +331,82 @@ def motion_chunks(paths, ambiguous_times, max_gap_seconds):
     return chunks
 
 
-def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None):
+def isolated_marker_outliers(epochs, paths, max_speed_kmh, slack_meters, max_gap_minutes):
+    """Screen isolated tracking markers against one traveler's surrounding log.
+
+    Logger segments are not device identities. Require a feasible bypass and
+    either a continuous track bracketing the marker or another corroborating
+    epoch. All surrounding position alternatives must agree; duplicate copies
+    never supply support.
+    """
+    times, rejected, tested = sorted(epochs), set(), set()
+    limit = max_gap_minutes * 60
+
+    def supported(a, b):
+        return all(reachable(first, second, max_speed_kmh, slack_meters)
+                   for first in epochs[a] for second in epochs[b])
+
+    for i in range(1, len(times) - 1):
+        left, time, right = times[i - 1:i + 2]
+        candidates = [fix for fix in epochs[time] if all(len(paths[seq]) == 1 for seq in fix.sequences)]
+        if not candidates or max((time - left).total_seconds(), (right - time).total_seconds()) > limit:
+            continue
+        if not supported(left, right):
+            continue
+        left_sequences = set().union(*(fix.sequences for fix in epochs[left]))
+        right_sequences = set().union(*(fix.sequences for fix in epochs[right]))
+        corroborated = (bool(left_sequences & right_sequences)
+                        or (i >= 2 and (left - times[i - 2]).total_seconds() <= limit
+                            and supported(times[i - 2], left))
+                        or (i + 2 < len(times) and (times[i + 2] - right).total_seconds() <= limit
+                            and supported(right, times[i + 2])))
+        if not corroborated:
+            continue
+        for fix in candidates:
+            tested.add(fix)
+            if (all(not reachable(first, fix, max_speed_kmh, slack_meters) for first in epochs[left])
+                    and all(not reachable(fix, last, max_speed_kmh, slack_meters) for last in epochs[right])):
+                rejected.add(fix)
+    return rejected, tested
+
+
+def correct_border_maps(fixes, lookup, reference, report):
+    """Resolve a return excursion only when both reference maps support it.
+
+    Duration and point count do not decide country membership. The original
+    country's reference must exclude the point and the surrounding country's
+    reference must include it. Preserve a visit if either reference disagrees
+    with the proposed correction or is unavailable.
+    """
+    if reference is None:
+        return
+    periods = []
+    for fix in sorted((fix for fix in fixes if fix.time is not None
+                       and any(seq is not None for seq in fix.sequences)), key=lambda fix: fix.time):
+        if not periods or periods[-1][0] != fix.raw_country:
+            periods.append((fix.raw_country, [fix]))
+        else:
+            periods[-1][1].append(fix)
+    for i in range(1, len(periods) - 1):
+        original, points = periods[i]
+        surrounding = periods[i - 1][0]
+        if original is None or surrounding is None or original == surrounding or surrounding != periods[i + 1][0]:
+            continue
+        if any(lookup.distance_to(fix.latitude, fix.longitude, surrounding,
+                                  MAX_AUTO_COAST_METERS / 1000) > MAX_AUTO_COAST_METERS / 1000 for fix in points):
+            continue
+        destination, source = reference(surrounding), reference(original)
+        if destination is None or source is None:
+            continue
+        for fix in points:
+            if destination(fix.latitude, fix.longitude) == surrounding and source(fix.latitude, fix.longitude) is None:
+                fix.country = fix.reference_country = surrounding
+                report["border_corrected"] += fix.count
+                report["decisions"].append((fix.time, original[0], surrounding[0],
+                                            "reference maps agree on boundary correction", fix.count))
+
+
+def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None, position_allowance=0):
     """Resolve coastal visit gaps using independent map evidence or an override.
 
     Use immutable raw tracking labels as references. Assign only when the same
@@ -347,7 +423,8 @@ def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None
         if fix.time is not None and any(sequence is not None for sequence in fix.sequences):
             epochs[fix.time].append(fix)
     times = sorted(epochs)
-    states = {time: {fix.raw_country for fix in epochs[time] if fix.raw_country is not None} for time in times}
+    states = {time: {fix.reference_country or fix.raw_country for fix in epochs[time]
+                    if fix.reference_country or fix.raw_country} for time in times}
     previous, following, country = {}, {}, None
     for time in times:
         labels = states[time]
@@ -382,13 +459,15 @@ def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None
                 report["coastal_unavailable"].append(country[0])
                 continue
             verified = {fix for fix in points if detailed(fix.latitude, fix.longitude) == country}
-            if not verified:
-                continue
-            radius = min(MAX_AUTO_COAST_METERS, math.ceil(max(
+            map_radius = (math.ceil(max(
                 lookup.distance_to(fix.latitude, fix.longitude, country, MAX_AUTO_COAST_METERS / 1000) * 1000
-                for fix in verified)))
+                for fix in verified)) if verified else 0)
+            radius = min(MAX_AUTO_COAST_METERS, max(map_radius, position_allowance))
+            if radius <= 0:
+                continue
             locations = len({(fix.latitude, fix.longitude) for fix in verified})
-            report["coastal_models"].append((country[0], locations, radius))
+            report["coastal_models"].append((country[0], locations, map_radius))
+            report["coastal_effective"].append((country[0], radius))
         for fix in points:
             if nearby(fix.latitude, fix.longitude, radius / 1000) == {country}:
                 fix.country = country
@@ -397,20 +476,20 @@ def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None
                 depth = lookup.distance_to(fix.latitude, fix.longitude, country, radius / 1000)
                 report["max_inferred_distance_meters"] = max(report["max_inferred_distance_meters"], depth * 1000)
                 reason = ("reference country polygon" if fix in verified else
-                          "reference-derived coastal visit continuity" if radius_meters is None else "explicit coastal tolerance")
+                          "coastal continuity within position/map allowance" if radius_meters is None else "explicit coastal tolerance")
                 report["decisions"].append((fix.time, "Unassigned", country[0], reason, fix.count))
 
 
 def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                     max_speed_kmh=1000, max_gap_minutes=60, motion_slack_meters=10000,
-                    coastal=True, coastal_reference=None):
-    """Conservative screening of timed tracking observations.
+                    coastal=True, coastal_reference=None, borders=True):
+    """Screen timed tracking observations and infer country-visit context.
 
     Ordinary movement can turn, stop, change mode, cross a border briefly, fly,
     or travel on water. Neither shape, dwell duration nor sample density proves
-    GPS error. Exclude only isolated fixes requiring excessive speed on BOTH
-    sides, with two corroborating observations on each side and a feasible
-    bypass. Do not select a truth among overlapping/conflicting recordings.
+    GPS error. Isolated fixes need excessive speed on BOTH sides and a feasible
+    bypass with corroborating context. Country-map corrections need independent
+    reference agreement. Do not choose a conflicting track by duplicate count.
     """
     if not enabled:
         fixes = [Fix(lat, lon, time, lookup(lat, lon), 1, {sequence}, lookup(lat, lon))
@@ -452,17 +531,26 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                 rejected.add(fix)
                 decisions.append((fix.time, fix.raw_country[0] if fix.raw_country else "Unassigned",
                                   "Excluded", "both legs exceed configured movement bound", fix.count))
+    markers, checked = isolated_marker_outliers(epochs, paths, max_speed_kmh, motion_slack_meters, max_gap_minutes)
+    rejected.update(markers)
+    tested.update(checked)
+    for fix in markers:
+        decisions.append((fix.time, fix.raw_country[0] if fix.raw_country else "Unassigned", "Excluded",
+                          "isolated marker contradicts surrounding tracking", fix.count))
     report = {"enabled": True, "input": total, "unique": len(fixes),
               "excluded": sum(fix.count for fix in rejected), "tested": len(tested),
               "conflicting_epochs": len(ambiguous_times), "inferred": 0,
               "coastal_enabled": coastal, "coastal_automatic": gps_radius_meters is None and coastal_reference is not None,
               "coastal_models": [], "coastal_unavailable": [], "reference_confirmed": 0,
+              "coastal_effective": [], "border_corrected": 0, "borders_enabled": borders,
               "max_inferred_distance_meters": 0, "gps_radius_meters": gps_radius_meters,
               "max_speed_kmh": max_speed_kmh, "max_gap_minutes": max_gap_minutes,
               "motion_slack_meters": motion_slack_meters, "decisions": decisions}
     retained = [fix for fix in fixes if fix not in rejected]
+    if borders:
+        correct_border_maps(retained, lookup, coastal_reference, report)
     if coastal:
-        infer_coastal_countries(retained, lookup, gps_radius_meters, report, coastal_reference)
+        infer_coastal_countries(retained, lookup, gps_radius_meters, report, coastal_reference, motion_slack_meters)
     return retained, report
 
 
@@ -474,16 +562,18 @@ def format_denoising(report):
     if not report["coastal_enabled"]:
         tolerance = "off"
     elif report["coastal_automatic"]:
-        models = "; ".join(f"{name}: {radius:,} m from {locations:,} reference-confirmed locations"
+        effective = dict(report["coastal_effective"])
+        models = "; ".join(f"{name}: {effective[name]:,} m effective; map disagreement {radius:,} m "
+                           f"from {locations:,} reference-confirmed locations"
                            for name, locations, radius in report["coastal_models"])
-        tolerance = "automatic from independent reference country polygons"
+        tolerance = "automatic from reference country polygons and the position allowance"
         tolerance += ". " + (models or "No supported mapping band found")
         if report["coastal_unavailable"]:
             tolerance += ". Reference unavailable: " + ", ".join(report["coastal_unavailable"])
     return (f"Denoising: on · Input GPX points: {report['input']:,} · Distinct records: {report['unique']:,}\n"
             f"Excluded as motion outliers: {report['excluded']:,} GPX points · "
             f"Distinct tracking fixes checked: {report['tested']:,} · "
-            f"Conflicting timestamp groups retained: {report['conflicting_epochs']:,}\n"
+            f"Conflicting timestamp groups observed: {report['conflicting_epochs']:,}\n"
             f"Movement bounds: {report['max_speed_kmh']:g} km/h; "
             f"{report['motion_slack_meters']:g} m allowance per position; "
             f"{report['max_gap_minutes']:g} min maximum gap. These are assumptions, not fitted GPS accuracy.\n"
@@ -491,7 +581,9 @@ def format_denoising(report):
             f"Country assignments inferred: {report['inferred']:,} · "
             f"Reference-covered GPX points: {report['reference_confirmed']:,} · "
             f"Farthest inferred polygon distance: {report['max_inferred_distance_meters']:.1f} m.\n"
-            "Named countries are not erased because a visit is short. Unassigned does not prove offshore.")
+            f"Border-map corrections: {report['border_corrected']:,} "
+            f"({'enabled' if report['borders_enabled'] else 'disabled'}).\n"
+            "Duration alone does not erase a named country. Coastal labels are approximate visit context, not proof of land presence.")
 
 
 def format_decisions(report):
@@ -595,21 +687,24 @@ def main(argv=None):
                         help="screen isolated tracking outliers using movement bounds (default: enabled)")
     parser.add_argument("--coastal-denoise", action=argparse.BooleanOptionalAction, default=True,
                         help="resolve coastal visit gaps using reference country geometry (default: enabled)")
+    parser.add_argument("--border-denoise", action=argparse.BooleanOptionalAction, default=True,
+                        help="correct border-map disagreements using both countries' reference maps (default: enabled)")
     parser.add_argument("--gps-radius-meters", type=float,
                         help="override the automatic coastal mapping band with an explicit tolerance")
     parser.add_argument("--max-speed-kmh", type=float, default=1000,
                         help="conservative travel-speed bound for isolated outliers (default: 1000)")
     parser.add_argument("--max-gap-minutes", type=float, default=60,
                         help="do not test movement across longer recording gaps (default: 60)")
-    parser.add_argument("--motion-slack-meters", type=float, default=10000,
-                        help="safety allowance per recorded position, not estimated accuracy (default: 10000)")
+    parser.add_argument("--position-allowance-meters", "--motion-slack-meters", dest="motion_slack_meters",
+                        type=float, default=10000,
+                        help="per-position allowance for motion and automatic coastal inference (default: 10000)")
     parser.add_argument("--explain", action="store_true", help="print reasons for every excluded or inferred record")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
     for flag, value in (("--gps-radius-meters", args.gps_radius_meters), ("--max-speed-kmh", args.max_speed_kmh),
-                        ("--max-gap-minutes", args.max_gap_minutes), ("--motion-slack-meters", args.motion_slack_meters)):
-        if value is not None and (not math.isfinite(value) or value < 0 or (value == 0 and flag != "--motion-slack-meters")):
-            parser.error(f"{flag} must be finite and {'nonnegative' if flag == '--motion-slack-meters' else 'positive'}")
+                        ("--max-gap-minutes", args.max_gap_minutes), ("--position-allowance-meters", args.motion_slack_meters)):
+        if value is not None and (not math.isfinite(value) or value < 0 or (value == 0 and flag != "--position-allowance-meters")):
+            parser.error(f"{flag} must be finite and {'nonnegative' if flag == '--position-allowance-meters' else 'positive'}")
     try:
         with args.gpx.open("rb") as source:
             points = gpx_samples(source, motion_groups=True)
@@ -619,12 +714,13 @@ def main(argv=None):
             lookup = country_lookup(load_countries(
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
-            reference = (None if args.country_data is not None else
-                         lambda country: load_coastal_reference(country, lookup.iso3.get(country)))
+            reference = (None if args.country_data is not None else lru_cache(maxsize=8)(
+                lambda country: load_coastal_reference(country, lookup.iso3.get(country))))
             fixes, report = denoise_samples(chain((first,), points), lookup, enabled=args.denoise,
                                            gps_radius_meters=args.gps_radius_meters, max_speed_kmh=args.max_speed_kmh,
                                            max_gap_minutes=args.max_gap_minutes, motion_slack_meters=args.motion_slack_meters,
-                                           coastal=args.coastal_denoise, coastal_reference=reference)
+                                           coastal=args.coastal_denoise, coastal_reference=reference,
+                                           borders=args.border_denoise)
             labels = ((fix.country, fix.time, fix.count) for fix in fixes)
             output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
                       else format_table(*summarize_labels(labels)))

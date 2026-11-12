@@ -169,12 +169,12 @@ def test_other_days_and_input_order_do_not_train_a_different_answer():
         assert all(f.time != route[6][2] for f in fixes if f.time < BASE + timedelta(days=1))
 
 
-def test_conflicting_simultaneous_positions_are_retained_without_voting():
+def test_impossible_isolated_conflict_uses_motion_evidence_without_duplicate_voting():
     route = samples([(0, i * .001) for i in range(13)])
     other = (30, 30, route[6][2], 2)
     fixes, report = script.denoise_samples(route + [other] * 100, lambda *_: None)
-    assert report["conflicting_epochs"] == 1 and report["excluded"] == 0
-    assert sum(f.count for f in fixes) == 113
+    assert report["conflicting_epochs"] == 1 and report["excluded"] == 100
+    assert sum(f.count for f in fixes) == 13
 
 
 def test_distinct_overlapping_recordings_are_not_resolved_by_density():

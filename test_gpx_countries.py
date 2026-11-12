@@ -109,7 +109,7 @@ def test_unassigned_periods_break_runs_and_untimed_points_are_unplaced():
     result = script.group_timeline([
         (1, 0, base), (0, 0, base + timedelta(hours=1)),
         (1, 0, base + timedelta(hours=2)), (1, 0, None), (0, 0, None),
-    ], lookup, show_offshore=True)
+    ], lookup)
     periods, total, unassigned, untimed = result
     assert [row[0] for row in periods] == [("Alpha", "AA"), None, ("Alpha", "AA"), ("Alpha", "AA"), None]
     assert all(row[2] is None and row[3] is None for row in periods[-2:])
@@ -119,7 +119,7 @@ def test_unassigned_periods_break_runs_and_untimed_points_are_unplaced():
     assert "Untimed points are grouped by country at the end" in table
 
 
-def test_timeline_excludes_offshore_before_grouping_same_country_points():
+def test_timeline_keeps_offshore_before_grouping_same_country_points():
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     result = script.group_timeline([
         (1, 0, base), (0, 0, base + timedelta(hours=1)),
@@ -127,44 +127,41 @@ def test_timeline_excludes_offshore_before_grouping_same_country_points():
     ], lambda latitude, _longitude: ("Alpha", "AA") if latitude == 1 else None)
     table = script.format_timeline(*result)
     rows = [line.split("|") for line in table.splitlines()[2:] if line.startswith("|")]
-    assert [row[1].strip() for row in rows] == ["Alpha"]
-    assert rows[0][3].strip() == "2"
+    assert [row[1].strip() for row in rows] == ["Alpha", "Unassigned / offshore", "Alpha", "Unassigned / offshore"]
+    assert rows[0][3].strip() == "1"
     assert rows[0][4].strip() == "2026-01-01T00:00:00Z"
-    assert rows[0][5].strip() == "2026-01-01T02:00:00Z"
-    assert rows[0][6].strip() == "2:00:00"
-    assert "Recorded periods: 1" in table and "Input GPX points: 4" in table
-    assert "Unassigned/offshore points excluded before grouping: 2" in table
-    assert "Untimed points are grouped" not in table
+    assert rows[0][5].strip() == "2026-01-01T00:00:00Z"
+    assert rows[0][6].strip() == "0:00:00"
+    assert "Recorded periods: 3" in table and "GPX points represented: 4" in table
+    assert "excluded before grouping" not in table
+    assert "Untimed points are grouped" in table
 
 
-def test_offshore_filter_merges_gaps_but_other_countries_still_split_returns():
+def test_offshore_and_other_countries_both_split_returns():
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     lookup = script.country_lookup(country_data())
     points = [(2, 2, base), (5, 5, base + timedelta(hours=1)),
               (2, 2, base + timedelta(hours=2)), (1, 21, base + timedelta(hours=3)),
               (5, 5, base + timedelta(hours=4)), (2, 2, base + timedelta(hours=5))]
     periods, total, unassigned, untimed = script.group_timeline(reversed(points), lookup)
-    assert [period[0] for period in periods] == [("Alpha", "AA"), ("Beta", "BB"), ("Alpha", "AA")]
-    assert [period[1] for period in periods] == [2, 1, 1]
-    assert periods[0][2:] == [base, base + timedelta(hours=2)]
-    assert periods[2][2:] == [base + timedelta(hours=5), base + timedelta(hours=5)]
+    assert [period[0] for period in periods] == [("Alpha", "AA"), None, ("Alpha", "AA"), ("Beta", "BB"), None, ("Alpha", "AA")]
+    assert [period[1] for period in periods] == [1] * 6
+    assert periods[0][2:] == [base, base]
+    assert periods[-1][2:] == [base + timedelta(hours=5), base + timedelta(hours=5)]
     assert (total, unassigned, untimed) == (6, 2, 0)
 
 
-def test_timeline_with_only_offshore_points_displays_no_country_rows():
+def test_timeline_with_only_offshore_points_displays_them():
     time = datetime(2026, 1, 1, tzinfo=timezone.utc)
     result = script.group_timeline([(0, 0, time)], lambda *_: None)
     table = script.format_timeline(*result)
-    assert len([line for line in table.splitlines() if line.startswith("|")]) == 2
-    assert "Countries/territories: 0" in table and "Recorded periods: 0" in table
-    assert "Unassigned/offshore points excluded before grouping: 1" in table
+    assert len([line for line in table.splitlines() if line.startswith("|")]) == 3
+    assert "Countries/territories: 0" in table and "Recorded periods: 1" in table
+    assert "| Unassigned / offshore" in table
 
 
-@pytest.mark.parametrize("flags, expected", [
-    (["--timeline"], ["Alpha"]),
-    (["--timeline", "--show-offshore"], ["Alpha", "Unassigned / offshore", "Alpha"]),
-])
-def test_timeline_offshore_flag(tmp_path, capsys, flags, expected):
+@pytest.mark.parametrize("flags", [[], ["--denoise"], ["--no-denoise"]])
+def test_timeline_keeps_offshore_without_contradicting_evidence(tmp_path, capsys, flags):
     boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
     boundaries.write_text(json.dumps(country_data()))
     source.write_bytes(gpx('''
@@ -172,17 +169,10 @@ def test_timeline_offshore_flag(tmp_path, capsys, flags, expected):
         <wpt lat="5" lon="5"><time>2026-01-01T01:00:00Z</time></wpt>
         <wpt lat="2" lon="2"><time>2026-01-01T02:00:00Z</time></wpt>
     '''))
-    assert script.main([str(source), "--country-data", str(boundaries), *flags]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), "--timeline", *flags]) == 0
     output = capsys.readouterr().out
-    assert [line.split("|")[1].strip() for line in output.splitlines()[2:] if line.startswith("|")] == expected
-
-
-@pytest.mark.parametrize("view", [[], ["--summary"]])
-def test_show_offshore_requires_timeline(view, capsys):
-    with pytest.raises(SystemExit) as error:
-        script.main(["missing.gpx", "--show-offshore", *view])
-    assert error.value.code == 2
-    assert "requires --timeline" in capsys.readouterr().err
+    assert [line.split("|")[1].strip() for line in output.splitlines()[2:] if line.startswith("|")] == [
+        "Alpha", "Unassigned / offshore", "Alpha"]
 
 
 def test_all_untimed_points_have_no_invented_period_or_span():
@@ -225,6 +215,187 @@ def test_chronological_flag_has_been_renamed(capsys):
         script.main(["missing.gpx", "--chronological"])
     assert error.value.code == 2
     assert "unrecognized arguments" in capsys.readouterr().err
+
+
+def samples(coordinates, sequence=1, step_seconds=60):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return [(lat, lon, base + timedelta(seconds=index * step_seconds), sequence)
+            for index, (lat, lon) in enumerate(coordinates)]
+
+
+def test_reader_retains_independent_tracks_routes_and_waypoints():
+    body = '''<wpt lat="2" lon="2"/><wpt lat="2" lon="2"/>
+        <rte><rtept lat="2" lon="2"/><rtept lat="2" lon="3"/></rte>
+        <trk><trkseg><trkpt lat="2" lon="2"/><trkpt lat="2" lon="3"/></trkseg>
+        <trkseg><trkpt lat="2" lon="2"/></trkseg></trk>'''
+    result = list(script.gpx_samples(io.BytesIO(gpx(body))))
+    assert [item[3] for item in result] == [1, 2, 3, 3, 4, 4, 5]
+
+
+@pytest.mark.parametrize("flags, filtered", [([], True), (["--denoise"], True), (["--no-denoise"], False)])
+@pytest.mark.parametrize("view", [[], ["--timeline"]])
+def test_denoising_default_and_opt_out_in_both_views(tmp_path, capsys, flags, filtered, view):
+    boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
+    boundaries.write_text(json.dumps(country_data()))
+    body = '<wpt lat="1" lon="21"><time>2026-01-01T00:06:00Z</time></wpt>' * 2
+    body += '<trk><trkseg>' + ''.join(
+        f'<trkpt lat="2" lon="{1 + index * .001}"><time>2026-01-01T00:{index:02}:00Z</time></trkpt>'
+        for index in range(13)) + '</trkseg></trk>'
+    original = gpx(body)
+    source.write_bytes(original)
+    assert script.main([str(source), "--country-data", str(boundaries), *view, *flags]) == 0
+    output = capsys.readouterr().out
+    assert ("| Beta" not in output) == filtered
+    assert f"Denoising: {'on' if filtered else 'off'}" in output
+    if filtered:
+        assert "Input GPX points: 15" in output and "Distinct observations: 14" in output
+        assert "isolated conflicts: 2" in output
+    assert source.read_bytes() == original
+
+
+def test_same_time_conflict_follows_supported_path_and_duplicates_do_not_vote():
+    lookup = script.country_lookup(country_data())
+    route = samples([(2, 1 + index * .001) for index in range(13)])
+    conflicting = (1, 21, route[6][2], 2)
+    fixes, report = script.denoise_samples([conflicting] * 100 + route, lookup)
+    assert len(fixes) == 13
+    assert report["isolated"] == 100
+    assert all(fix.country == ("Alpha", "AA") for fix in fixes)
+
+
+def test_sparse_context_can_use_pooled_limits_without_fabricating_a_local_fit():
+    lookup = script.country_lookup(country_data())
+    context = samples([(2, 1), (2, 1.001)], sequence=2)
+    orphan = (1, 21, context[0][2] + timedelta(seconds=8), 3)
+    sparse, report = script.denoise_samples([*context, orphan], lookup)
+    assert len(sparse) == 3 and report["isolated"] == 0
+    training = [(lat, lon, time + timedelta(days=1), seq) for lat, lon, time, seq in
+                samples([(2, 1 + index * .001) for index in range(13)])]
+    fixes, report = script.denoise_samples([*training, *context, orphan], lookup)
+    assert len(fixes) == 15 and report["isolated"] == 1
+
+
+def test_agreement_from_another_supported_path_preserves_an_isolated_observation():
+    lookup = script.country_lookup(country_data())
+    first = samples([(2, 1 + index * .001) for index in range(13)])
+    second = samples([(1, 21 + index * .001) for index in range(13)], sequence=2)
+    orphan = (1, 21.0065, first[6][2] + timedelta(seconds=30), 3)
+    fixes, report = script.denoise_samples([*first, *second, orphan], lookup)
+    assert len(fixes) == 27 and report["isolated"] == 0
+
+
+def test_path_spike_is_excluded_but_sparse_data_is_left_alone():
+    lookup = script.country_lookup(country_data())
+    route = samples([(2, 1 + index * .001) for index in range(31)])
+    spike = (30, 30, route[15][2], 1)
+    route[15] = spike
+    fixes, report = script.denoise_samples(route, lookup)
+    assert len(fixes) == 30 and report["spikes"] == 1
+    sparse, report = script.denoise_samples(route[14:18], lookup)
+    assert len(sparse) == 4 and report["spikes"] == 0
+
+
+def coast_data(with_neighbor=False):
+    data = {"type": "FeatureCollection", "features": [
+        {"properties": {"NAME_EN": "Alpha", "ISO_A2": "AA"},
+         "geometry": {"type": "Polygon", "coordinates": [ring(-1, -1, 0, 1)]}},
+    ]}
+    if with_neighbor:
+        data["features"].append(
+            {"properties": {"NAME_EN": "Beta", "ISO_A2": "BB"},
+             "geometry": {"type": "Polygon", "coordinates": [ring(0, -1, 1, 1)]}})
+    return data
+
+
+@pytest.mark.parametrize("with_neighbor", [False, True])
+def test_fitted_boundary_jitter_is_adjusted_before_country_grouping(with_neighbor):
+    lookup = script.country_lookup(coast_data(with_neighbor))
+    longitudes = [-.0002, -.0004, -.00025, -.00045, -.0002, .00005, -.0002,
+                  -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
+    route = samples([(.1 + index * .0001, lon) for index, lon in enumerate(longitudes)])
+    fixes, report = script.denoise_samples(route, lookup)
+    periods, total, unassigned, _untimed = script.group_timeline_labels(
+        (fix.country, fix.time, fix.count) for fix in fixes)
+    assert report["adjusted"] == 1 and report["spikes"] == 0
+    assert len(periods) == 1 and periods[0][0] == ("Alpha", "AA")
+    assert total == 13 and unassigned == 0
+
+
+def test_another_coherent_source_can_block_a_boundary_reassignment():
+    lookup = script.country_lookup(coast_data(with_neighbor=True))
+    longitudes = [-.0002, -.0004, -.00025, -.00045, -.0002, .00005, -.0002,
+                  -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
+    first = samples([(.1 + index * .0001, lon) for index, lon in enumerate(longitudes)])
+    second = samples([(.1 + index * .0001, .00005) for index in range(13)], sequence=2)
+    fixes, report = script.denoise_samples([*first, *second], lookup)
+    shared = [fix for fix in fixes if fix.sequences == {1, 2}]
+    assert len(shared) == 1 and shared[0].country == ("Beta", "BB")
+    assert report["adjusted"] == 0
+
+
+def test_boundary_uncertainty_handles_holes_and_the_date_line():
+    lookup = script.country_lookup(country_data())
+    assert lookup.near(5, 5, ("Alpha", "AA"), 112)
+    assert not lookup.near(5, 5, ("Alpha", "AA"), 110)
+    for longitude in (-178.99, 178.99):
+        assert lookup.near(0, longitude, ("Beta", "BB"), 2)
+        assert not lookup.near(0, longitude, ("Beta", "BB"), 1)
+
+
+def test_sustained_offshore_transit_and_short_coherent_country_crossing_remain():
+    lookup = script.country_lookup(coast_data())
+    route = samples([(.1, lon) for lon in [-.02, -.015, -.01, -.005, .005, .01, .005, -.005, -.01, -.015, -.02]])
+    fixes, report = script.denoise_samples(route, lookup)
+    assert sum(fix.country is None for fix in fixes) == 3
+    assert report["adjusted"] == report["spikes"] == 0
+    # A narrow country crossed on a coherent path is a real supported crossing,
+    # even when it has only one recorded point and a zero recorded span.
+    data = coast_data(with_neighbor=True)
+    data["features"][0]["geometry"] = {"type": "MultiPolygon", "coordinates": [
+        [ring(-1, -1, 0, 1)], [ring(.01, -1, 1, 1)]]}
+    data["features"][1]["geometry"]["coordinates"] = [ring(0, -1, .01, 1)]
+    route = samples([(.1, lon) for lon in [-.04, -.03, -.02, -.01, .005, .02, .03, .04, .05]])
+    fixes, report = script.denoise_samples(route, script.country_lookup(data))
+    assert sum(fix.country == ("Beta", "BB") for fix in fixes) == 1
+    assert report["adjusted"] == report["spikes"] == 0
+
+
+def test_denoiser_does_not_bridge_large_gaps_or_move_untimed_observations():
+    lookup = script.country_lookup(coast_data())
+    longitudes = [-.0002, -.0004, -.00025, -.00045, -.0002, .00005, -.0002,
+                  -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
+    route = samples([(.1 + index * .0001, lon) for index, lon in enumerate(longitudes)])
+    route = [(lat, lon, time + (timedelta(hours=1) if index >= 5 else timedelta()), seq)
+             for index, (lat, lon, time, seq) in enumerate(route)]
+    fixes, report = script.denoise_samples([*route, (.1, .00005, None, 2)], lookup)
+    assert sum(fix.country is None for fix in fixes) == 2
+    assert report["adjusted"] == 0
+
+
+def test_no_denoise_preserves_equal_time_order_and_every_point():
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    route = [(2, 2, base, 1), (1, 21, base, 2), (2, 2, base, 3)]
+    fixes, _report = script.denoise_samples(route, script.country_lookup(country_data()), enabled=False)
+    periods, total, _unassigned, _untimed = script.group_timeline_labels(
+        (fix.country, fix.time, fix.count) for fix in fixes)
+    assert [row[0][1] for row in periods] == ["AA", "BB", "AA"]
+    assert total == 3
+
+
+def test_fitted_filter_scales_with_sample_rate_and_distance():
+    # The same physical pattern should not depend on fixed minutes/metres.
+    results = []
+    for scale, step in [(1, 60), (10, 600)]:
+        data = coast_data()
+        for point in data["features"][0]["geometry"]["coordinates"][0]:
+            point[0] *= scale
+        longitudes = [-.0002, -.0004, -.00025, -.00045, -.0002, .00005, -.0002,
+                      -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
+        route = samples([(.1 + index * .0001, lon * scale)
+                         for index, lon in enumerate(longitudes)], step_seconds=step)
+        fixes, report = script.denoise_samples(route, script.country_lookup(data))
+        results.append(([fix.country for fix in fixes], report["adjusted"]))
+    assert results[0] == results[1]
 
 
 @pytest.mark.parametrize("body", [

@@ -182,37 +182,80 @@ def summarize(points, lookup):
     return countries, total, unassigned
 
 
-def format_table(countries, total, unassigned, *, chronological=False):
-    headers = ("Country / territory", "Code", "GPX points", "First recorded (UTC)", "Last recorded (UTC)")
+def timestamp(value):
+    if value is None:
+        return "—"
+    text = value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return text[:-1].rstrip("0") + "Z" if "." in text else text
 
-    def timestamp(value):
-        if value is None:
-            return "—"
-        text = value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-        return text[:-1].rstrip("0") + "Z" if "." in text else text
 
-    def row_order(item):
-        country, (_, first, _) = item
-        if chronological:
-            return (country is None, first is None,
-                    first or datetime.max.replace(tzinfo=timezone.utc), country or ("", ""))
-        return country is None, country or ("", "")
-
-    rows = []
-    for country, (count, first, last) in sorted(countries.items(), key=row_order):
-        name, code = country or ("Unassigned / offshore", "—")
-        rows.append((name, code, f"{count:,}", timestamp(first), timestamp(last)))
+def text_table(headers, rows):
     widths = [max(len(row[column]) for row in [headers, *rows]) for column in range(len(headers))]
 
     def line(row):
         return "| " + " | ".join(value.ljust(width) for value, width in zip(row, widths)) + " |"
 
-    lines = [line(headers), line(["-" * width for width in widths]), *(line(row) for row in rows)]
+    return "\n".join([line(headers), line(["-" * width for width in widths]), *(line(row) for row in rows)])
+
+
+def format_table(countries, total, unassigned):
+    headers = ("Country / territory", "Code", "GPX points", "First recorded (UTC)", "Last recorded (UTC)")
+    rows = []
+    for country, (count, first, last) in sorted(
+        countries.items(), key=lambda item: (item[0] is None, item[0] or ("", ""))
+    ):
+        name, code = country or ("Unassigned / offshore", "—")
+        rows.append((name, code, f"{count:,}", timestamp(first), timestamp(last)))
     count = sum(country is not None for country in countries)
-    lines += ["", f"Countries/territories: {count} · GPX points: {total:,} · Unassigned: {unassigned:,}",
-              "First/last are recorded timestamps, not continuous stays. — = no recorded timestamp."]
-    if chronological:
-        lines.append("Ordered by first recorded UTC timestamp; undated countries and unassigned points follow.")
+    lines = [text_table(headers, rows), "",
+             f"Countries/territories: {count} · GPX points: {total:,} · Unassigned: {unassigned:,}",
+             "First/last are recorded timestamps, not continuous stays. — = no recorded timestamp."]
+    return "\n".join(lines)
+
+
+def group_timeline(points, lookup):
+    timed, undated = [], defaultdict(int)
+    total = unassigned = untimed = 0
+    for latitude, longitude, time in points:
+        country = lookup(latitude, longitude)
+        total += 1
+        unassigned += country is None
+        if time is None:
+            untimed += 1
+            undated[country] += 1
+        else:
+            timed.append((time, country))
+    timed.sort(key=lambda item: item[0])
+    periods = []
+    for time, country in timed:
+        if not periods or periods[-1][0] != country:
+            periods.append([country, 1, time, time])
+        else:
+            periods[-1][1] += 1
+            periods[-1][3] = time
+    for country, count in sorted(undated.items(), key=lambda item: (item[0] is None, item[0] or ("", ""))):
+        periods.append([country, count, None, None])
+    return periods, total, unassigned, untimed
+
+
+def format_timeline(periods, total, unassigned, untimed):
+    headers = ("Country / territory", "Code", "GPX points", "Begin (UTC)", "End (UTC)", "Recorded span")
+    rows = []
+    for country, count, begin, end in periods:
+        name, code = country or ("Unassigned / offshore", "—")
+        span = str(end - begin) if begin is not None else "—"
+        if "." in span:
+            span = span.rstrip("0")
+        rows.append((name, code, f"{count:,}", timestamp(begin), timestamp(end), span))
+    countries = {country for country, _, _, _ in periods if country is not None}
+    timed_periods = sum(begin is not None for _, _, begin, _ in periods)
+    lines = [text_table(headers, rows), "",
+             f"Countries/territories: {len(countries)} · Recorded periods: {timed_periods:,}",
+             f"GPX points: {total:,} · Unassigned: {unassigned:,} · Untimed: {untimed:,}",
+             "Rows group consecutive countries after sorting UTC timestamps; returns start new rows.",
+             "Recorded span = end minus begin, based on samples; continuous presence is not implied."]
+    if untimed:
+        lines.append("Untimed points are grouped by country at the end; — = no recorded timestamp.")
     return "\n".join(lines)
 
 
@@ -221,11 +264,11 @@ def main(argv=None):
     parser.add_argument("gpx", type=Path, help="input .gpx file")
     parser.add_argument("--country-data", type=Path, help="existing Natural Earth country GeoJSON (offline)")
     view = parser.add_mutually_exclusive_group()
-    view.add_argument("--chronological", dest="chronological", action="store_true",
-                      help="order the country summary by first recorded UTC timestamp")
-    view.add_argument("--summary", dest="chronological", action="store_false",
+    view.add_argument("--timeline", dest="timeline", action="store_true",
+                      help="show country periods from oldest to newest, including return visits")
+    view.add_argument("--summary", dest="timeline", action="store_false",
                       help="show the alphabetical country summary (default)")
-    parser.set_defaults(chronological=False)
+    parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
     try:
         with args.gpx.open("rb") as source:
@@ -236,8 +279,11 @@ def main(argv=None):
             lookup = country_lookup(load_countries(
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
-            result = summarize(chain((first,), points), lookup)
-        print(format_table(*result, chronological=args.chronological))
+            if args.timeline:
+                output = format_timeline(*group_timeline(chain((first,), points), lookup))
+            else:
+                output = format_table(*summarize(chain((first,), points), lookup))
+        print(output)
     except (OSError, ValueError, ET.ParseError) as error:
         parser.exit(2, f"error: {error}\n")
     except (KeyError, TypeError, IndexError, AttributeError):

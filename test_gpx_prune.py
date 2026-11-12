@@ -120,17 +120,15 @@ def test_preview_uses_country_summary_timestamps_and_never_prompts_or_writes(fil
 def test_pruner_previews_original_points_even_when_country_report_denoises_them(files, capsys):
     source, boundaries = files
     track = ''.join(
-        f'<trkpt lat="2" lon="{1 + index * .001}"><time>2026-01-01T00:{index:02}:00Z</time></trkpt>'
+        f'<trkpt lat="2" lon="{22 if index == 6 else 1 + index * .001}"><time>2026-01-01T00:{index:02}:00Z</time></trkpt>'
         for index in range(13))
-    original = (f'<gpx xmlns="{NS[1:-1]}"><wpt lat="2" lon="22">'
-                '<time>2026-01-01T00:06:00Z</time></wpt>'
-                f'<trk><trkseg>{track}</trkseg></trk></gpx>')
+    original = f'<gpx xmlns="{NS[1:-1]}"><trk><trkseg>{track}</trkseg></trk></gpx>'
     source.write_text(original)
     assert gpx_countries.main([str(source), "--country-data", str(boundaries)]) == 0
     assert "| Beta" not in capsys.readouterr().out
     assert script.main(arguments(files, "--countries", "BB", "--dry-run")) == 0
     report = capsys.readouterr().out
-    assert "Matching points to remove: 1 of 14" in report and "| Beta" in report
+    assert "Matching points to remove: 1 of 13" in report and "| Beta" in report
     assert source.read_text() == original
     assert not source.with_name("history_pruned.gpx").exists()
 

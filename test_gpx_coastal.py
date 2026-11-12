@@ -1,4 +1,8 @@
-"""Coastline disagreement and visit continuity, using invented map geometry."""
+"""Coastline disagreement and visit continuity, using invented map geometry.
+
+Calibration-only cases set position allowance to zero. Separate cases exercise
+the user's positive allowance and the default CLI behavior.
+"""
 
 import io
 import json
@@ -30,8 +34,8 @@ def route(far=True):
     return samples([*coords, (.01, -.001)])
 
 
-def test_default_coastal_inference_learns_map_disagreement_without_erasing_open_water():
-    fixes, report = script.denoise_samples(route(), coast(), coastal_reference=reference)
+def test_map_calibration_without_position_allowance_preserves_open_water():
+    fixes, report = script.denoise_samples(route(), coast(), coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert [f.country for f in fixes] == [A, A, A, None, A]
     assert [f.raw_country for f in fixes] == [A, None, None, None, A]
     assert report["excluded"] == 0 and report["inferred"] == 2
@@ -39,14 +43,14 @@ def test_default_coastal_inference_learns_map_disagreement_without_erasing_open_
     assert report["coastal_models"] == [("Alpha", 1, 2002)]
     text = script.format_decisions(report)
     assert "reference country polygon" in text
-    assert "reference-derived coastal visit continuity" in text
+    assert "coastal continuity within position/map allowance" in text
 
 
 @pytest.mark.parametrize("copies", [1, 20, 100])
 def test_open_water_and_duplicate_records_do_not_inflate_the_mapping_band(copies):
     records = route()
     records = [*records, *([records[3]] * copies)]
-    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert report["coastal_models"] == [("Alpha", 1, 2002)]
     assert sum(f.count for f in fixes if f.country is None) == copies + 1
     assert report["excluded"] + sum(f.count for f in fixes) == len(records)
@@ -54,7 +58,7 @@ def test_open_water_and_duplicate_records_do_not_inflate_the_mapping_band(copies
 
 def test_no_reference_confirmed_land_means_no_invented_radius():
     records = samples([(.01, -.001), (.01, .015), (.01, .06), (.01, -.001)])
-    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert report["coastal_models"] == [] and report["inferred"] == 0
     assert [f.country for f in fixes] == [A, None, None, A]
 
@@ -63,14 +67,14 @@ def test_no_reference_confirmed_land_means_no_invented_radius():
 def test_calibration_uses_geographic_evidence_across_sampling_rates_and_logging_breaks(spacing):
     records = [(lat, lon, time, i) for i, (lat, lon, time, _) in enumerate(samples(
         [p[:2] for p in route(far=False)], seconds=spacing))]
-    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert report["coastal_models"] == [("Alpha", 1, 2002)]
     assert all(f.country == A for f in fixes)
 
 
 def test_reference_matches_do_not_replace_missing_raw_country_anchors():
     records = route(far=False)[:-1]
-    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert report["inferred"] == 0
     assert [f.country for f in fixes] == [A, None, None]
 
@@ -88,7 +92,7 @@ def test_named_foreign_visit_is_preserved_even_inside_an_automatic_band():
     coarse = script.country_lookup({"type": "FeatureCollection", "features": [
         feature(*A, -1, -1, 0, 1), feature(*B, .009, .5, .01, .6)]})
     records = samples([(-.01, -.001), (-.01, .018), (-.01, -.001), (.55, .0095), (.55, -.001)])
-    fixes, report = script.denoise_samples(records, coarse, coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, coarse, coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert fixes[3].country == B and fixes[3].raw_country == B
     assert report["excluded"] == 0
 
@@ -96,7 +100,7 @@ def test_named_foreign_visit_is_preserved_even_inside_an_automatic_band():
 def test_multiple_unassigned_positions_at_one_epoch_do_not_fragment_a_country_visit():
     records = route(far=False)
     records.append((.01, .014, records[2][2], 2))
-    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert all(f.country == A for f in fixes)
     assert report["conflicting_epochs"] == 1 and report["excluded"] == 0
     periods = script.group_timeline_labels((f.country, f.time, f.count) for f in fixes)[0]
@@ -108,7 +112,7 @@ def test_conflicting_named_countries_still_block_country_context():
         feature(*A, -1, -1, 0, 1), feature(*B, 2, -1, 3, 1)]})
     records = route(far=False)
     records.append((.01, 2.5, records[-1][2], 2))
-    fixes, report = script.denoise_samples(records, lookup, coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, lookup, coastal_reference=reference, motion_slack_meters=0, borders=False)
     assert report["inferred"] == 0
     assert fixes[1].country is None and fixes[2].country is None
 
@@ -172,8 +176,8 @@ def test_normal_cli_enables_automatic_coastal_handling_without_an_extra_flag(tmp
     output = capsys.readouterr().out
     rows = [line for line in output.splitlines() if line.startswith('|')][2:]
     assert len(rows) == 1 and "| Alpha" in rows[0]
-    assert "automatic from independent reference" in output
-    assert "2,002 m from 1 reference-confirmed locations" in output
+    assert "automatic from reference country polygons and the position allowance" in output
+    assert "10,000 m effective; map disagreement 2,002 m from 1 reference-confirmed locations" in output
     assert source.read_text() == original
     for flag in ["--no-coastal-denoise", "--no-denoise"]:
         assert script.main([str(source), "--timeline", flag]) == 0

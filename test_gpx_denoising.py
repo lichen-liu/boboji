@@ -223,7 +223,8 @@ def test_infeasible_bypass_prevents_an_isolated_deletion():
 def test_user_movement_bounds_and_gap_limits_control_the_decision():
     route = samples([(0, 0), (0, 0), (0, .1), (0, 0), (0, 0)])
     assert script.denoise_samples(route, lambda *_: None)[1]["excluded"] == 0  # Plausible flight.
-    assert script.denoise_samples(route, lambda *_: None, max_speed_kmh=130)[1]["excluded"] == 1
+    assert script.denoise_samples(route, lambda *_: None, max_speed_kmh=130,
+                                  motion_slack_meters=1000)[1]["excluded"] == 1
     assert script.denoise_samples(route, lambda *_: None, max_speed_kmh=130,
                                   motion_slack_meters=6000)[1]["excluded"] == 0
     assert script.denoise_samples(route, lambda *_: None, max_speed_kmh=130,

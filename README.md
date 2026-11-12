@@ -53,10 +53,10 @@ is feasible, and two surrounding observations on each side provide consistent
 context. Turns, stops, detours, changes of transport, short visits, and water
 travel are normal; their shape or duration alone does not justify removal.
 
-The defaults allow **1,500 km/h**, plus **1,000 m per position**, to accommodate
-mixed travel including flights. These are conservative policy assumptions,
+The defaults allow **1,000 km/h**, plus **10 km per position**, with a maximum
+recording gap of **one hour**. These are configurable policy assumptions,
 not learned GPS accuracy. `--max-speed-kmh`, `--motion-slack-meters`, and
-`--max-gap-minutes` (default 30) expose them. Lowering the speed bound can erase
+`--max-gap-minutes` (default 60) expose them. Lowering the speed bound can erase
 real faster travel. No motion test crosses a GPX segment boundary or a gap over
 the limit. Endpoints, sparse tracks, conflicting simultaneous locations, and
 distinct overlapping recordings are retained when context is insufficient.

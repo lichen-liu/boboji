@@ -35,89 +35,60 @@ python3 gpx_countries.py history.gpx > var/visited_countries.md
 The default view and `--summary` show one row per country in alphabetical order.
 `--timeline` sorts observations by UTC timestamp, then groups consecutive
 countries into rows with begin, end, recorded span, and point count. Returns
-start new rows: Canada → Peru → Canada produces three rows. Unassigned/offshore
+start new rows: Canada → Peru → Canada produces three rows. Unassigned
 points remain visible and also split periods; there is no blanket offshore
 exclusion, and `--show-offshore` is no longer needed. Untimed points are grouped
 by country at the end.
 Spans run from the first to last recorded point in each period and can include
 sampling gaps. The timeline flag replaces `--chronological`.
+Equal-time conflicts retain input order; rows do not resolve which position is true.
 
-`--denoise` is enabled by default in both views. It fits movement limits to each
-GPX track segment or route using its sampling cadence, speeds, and deviations
-from locally interpolated positions. Nearby path windows refine comparisons
-with isolated fixes. Robust upper fences (the larger of the
-90th percentile or upper quartile plus three interquartile ranges) provide
-empirical movement and scatter limits.
-Exact duplicate fixes retain their GPX counts but contribute only once to
-fitting. Isolated visits/endpoints that contradict a supported path, and
-isolated path spikes with implausible movement on both sides, can be excluded
-from the report.
+`--denoise` is enabled by default in both views. It screens **isolated, gross
+motion outliers** in recorded tracks. A point is excluded only if both incoming
+and outgoing displacements exceed the configured movement bound, the bypass
+is feasible, and two surrounding observations on each side provide consistent
+context. Turns, stops, detours, changes of transport, short visits, and water
+travel are normal; their shape or duration alone does not justify removal.
 
-The GPS border filter considers a short switch A → B → A within a track
-segment/route, including an unassigned B. By default, the samples in A
-surrounding the switch must be at most **10 minutes** apart, and B must contain
-at most **5 distinct timestamps**. Every B point must be within the estimated
-GPS radius of A's **polygon**, rather than its centroid. For switches into a
-named country B, a majority of interpolated positions between the surrounding
-A samples must also support A; coherent crossings supported by that bridge
-remain visible. For an unassigned coastal gap, the bridge may itself be
-unassigned if both it and every actual point stay within A's distance budget.
-A bridge that crosses another named country prevents the coastal correction.
-After a correction, neighboring unassigned gaps are checked again before
-grouping. These later passes only assign unassigned points; they do not change
-known country labels, and inferred points do not train the new radius fit.
+The defaults allow **1,500 km/h**, plus **1,000 m per position**, to accommodate
+mixed travel including flights. These are conservative policy assumptions,
+not learned GPS accuracy. `--max-speed-kmh`, `--motion-slack-meters`, and
+`--max-gap-minutes` (default 30) expose them. Lowering the speed bound can erase
+real faster travel. No motion test crosses a GPX segment boundary or a gap over
+the limit. Endpoints, sparse tracks, conflicting simultaneous locations, and
+distinct overlapping recordings are retained when context is insufficient.
+Waypoints and route points remain in the table but are not motion evidence.
+Exact duplicate tracking records preserve counts without adding evidence.
 
-The new short/sparse rule's automatic radius uses the same robust upper fence,
-fitted to time-weighted interpolation residuals in stable A observations on
-each side of the switch.
-The suspect run and the bridge across it do not train this threshold. At least
-three eligible residuals are needed for an automatic radius. With an explicit
-radius, a surrounding country run with five distinct timestamps can supply
-context even when a GPX segment has too few local residuals. The earlier
-one-sampling-interval rule also remains, using its per-path scatter bound when
-at least one surrounding country run has five timestamps and every bridge
-position agrees. Unsupported alternating country labels remain uncertain.
-This estimates trajectory scatter, not measured device accuracy or
-a calibrated probability. It can also reflect road curvature and map error.
+No coastal radius is estimated from road curvature. Optionally supply
+`--gps-radius-meters 1000` to allow approximate country assignment within
+1 km of a polygon. This **mapping tolerance** applies only to unassigned,
+timed tracking points bracketed by the same raw country, with that country the
+only polygon within the radius. Named countries are never rewritten merely
+because a visit is brief. Actual points are checked; no straight route is
+invented, inferred labels never become evidence, and duration/point-count
+cutoffs do not apply. This optional mapping policy can span logging breaks;
+it does not establish continuous presence or prove that a point was on land.
 
-Use `--gps-radius-meters 1000` to set an explicit 1 km polygon-distance cutoff.
-`--gps-max-minutes` and `--gps-max-points` adjust the time and independent-point
-limits; all conditions must hold. These options affect border reassignment,
-while the existing isolated-conflict and path-spike filters keep their fitted
-movement limits. Corrections happen before both summary and timeline grouping.
-The footer shows the inferred radius range (or override), corrected counts,
-and the farthest corrected point's distance to its previous country polygon.
-An isolated marker can also be reassigned, rather than discarded, when a
-supported path brackets its timestamp in the same country and the polygon
-distance passes this threshold. Other supported paths must agree; a path
-supporting the marker's original country vetoes the correction.
-Duplicate points in a short GPX segment do not veto a correction merely because
-that segment lacks enough context to fit its own radius. Nearby observations
-of a different country in another source still veto it.
+The footer distinguishes excluded motion outliers from inferred country labels,
+states the bounds, and reports how many tracking fixes could be checked.
+`--explain` lists each changed record with its timestamp, original country,
+result, and reason. `--no-denoise` shows every raw record and geometric label,
+including when a coastal tolerance was supplied. Small glitches, plausible
+jumps, persistent bias, and unknown accuracy remain unresolved. See the
+[denoising audit](DENOISING_AUDIT.md) for assumptions, counterexamples, tests,
+and limits. The old `--gps-max-points` / `--gps-max-minutes` heuristics were
+removed because short visits and sparse sampling are not evidence of error.
 
-Sustained offshore travel, long gaps, and untimed observations remain visible
-without sufficient evidence for a change. A real brief visit near a border can
-also resemble jitter; compare `--no-denoise` when reviewing uncertain cases.
-Paths with fewer than five distinct timestamps can use pooled limits learned
-from longer paths to detect gross movement conflicts;
-they do not supply their own boundary-uncertainty fit. With no longer paths,
-sparse data stays unchanged. Disagreement between supported sources prevents
-an automatic change. These are conservative empirical rules, not calibrated
-probabilities or proof of a visit. GPX segment context is available; original
-Google activity labels and
-confidence values cannot be recovered from an ordinary GPX file.
-
-The footer reports input counts, excluded points by reason, and adjusted
-country assignments. `--no-denoise` shows every original point and country
-assignment. Denoising changes only the displayed analysis; it never writes or
-modifies GPX files. The pruner's selection and removal preview always use the
-original points and geometric country assignments.
+Denoising changes only the displayed analysis; it never writes or modifies
+GPX files. The pruner's selection and removal preview always use original
+points and geometric country assignments.
 
 The first run downloads public [Natural Earth country boundaries](https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/)
 into the ignored `var/` folder beside the script; later runs work offline.
 Use `--country-data countries.geojson` for an existing local copy. Coordinates
 stay local. The table reflects recorded points, including transit; it does not
-infer countries between samples. Offshore/unmatched points are counted separately.
+infer countries between samples. Unmatched points are counted separately; “Unassigned” does not prove offshore.
 Country/territory definitions and approximate borders follow Natural Earth;
 `10m` denotes a 1:10 million map scale, not ten-metre positional accuracy.
 

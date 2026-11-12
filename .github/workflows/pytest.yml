@@ -17,11 +17,16 @@ concurrency:
 jobs:
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       matrix:
-        python-version: ["3.9", "3.13"]
+        include:
+          # setup-python has no Python 3.9 build for Ubuntu 26.04.
+          - python-version: "3.9"
+            os: ubuntu-24.04
+          - python-version: "3.13"
+            os: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

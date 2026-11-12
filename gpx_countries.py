@@ -213,15 +213,17 @@ def format_table(countries, total, unassigned):
     return "\n".join(lines)
 
 
-def group_timeline(points, lookup):
+def group_timeline(points, lookup, *, show_offshore=False):
     timed, undated = [], defaultdict(int)
     total = unassigned = untimed = 0
     for latitude, longitude, time in points:
         country = lookup(latitude, longitude)
         total += 1
         unassigned += country is None
+        untimed += time is None
+        if country is None and not show_offshore:
+            continue
         if time is None:
-            untimed += 1
             undated[country] += 1
         else:
             timed.append((time, country))
@@ -238,27 +240,25 @@ def group_timeline(points, lookup):
     return periods, total, unassigned, untimed
 
 
-def format_timeline(periods, total, unassigned, untimed, *, show_offshore=False):
+def format_timeline(periods, total, unassigned, untimed):
     headers = ("Country / territory", "Code", "GPX points", "Begin (UTC)", "End (UTC)", "Recorded span")
-    visible = [period for period in periods if show_offshore or period[0] is not None]
     rows = []
-    for country, count, begin, end in visible:
+    for country, count, begin, end in periods:
         name, code = country or ("Unassigned / offshore", "—")
         span = str(end - begin) if begin is not None else "—"
         if "." in span:
             span = span.rstrip("0")
         rows.append((name, code, f"{count:,}", timestamp(begin), timestamp(end), span))
-    countries = {country for country, _, _, _ in visible if country is not None}
-    timed_periods = sum(begin is not None for _, _, begin, _ in visible)
+    countries = {country for country, _, _, _ in periods if country is not None}
+    timed_periods = sum(begin is not None for _, _, begin, _ in periods)
     lines = [text_table(headers, rows), "",
              f"Countries/territories: {len(countries)} · Recorded periods: {timed_periods:,}",
              f"Input GPX points: {total:,} · Unassigned: {unassigned:,} · Untimed: {untimed:,}",
              "Rows group consecutive countries after sorting UTC timestamps; returns start new rows.",
              "Recorded span = end minus begin, based on samples; continuous presence is not implied."]
-    if len(visible) < len(periods):
-        lines.append(f"Hidden unassigned/offshore rows: {len(periods) - len(visible):,} · Points: {unassigned:,}. "
-                     "Country period begin/end timestamps are preserved.")
-    if any(begin is None for _, _, begin, _ in visible):
+    if unassigned and not any(country is None for country, _, _, _ in periods):
+        lines.append(f"Unassigned/offshore points excluded before grouping: {unassigned:,}.")
+    if any(begin is None for _, _, begin, _ in periods):
         lines.append("Untimed points are grouped by country at the end; — = no recorded timestamp.")
     return "\n".join(lines)
 
@@ -273,7 +273,7 @@ def main(argv=None):
     view.add_argument("--summary", dest="timeline", action="store_false",
                       help="show the alphabetical country summary (default)")
     parser.add_argument("--show-offshore", action="store_true",
-                        help="include unassigned/offshore rows in timeline view (hidden by default)")
+                        help="include unassigned/offshore points when grouping the timeline (excluded by default)")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
     if args.show_offshore and not args.timeline:
@@ -288,8 +288,9 @@ def main(argv=None):
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
             if args.timeline:
-                output = format_timeline(*group_timeline(chain((first,), points), lookup),
-                                         show_offshore=args.show_offshore)
+                output = format_timeline(*group_timeline(
+                    chain((first,), points), lookup, show_offshore=args.show_offshore
+                ))
             else:
                 output = format_table(*summarize(chain((first,), points), lookup))
         print(output)

@@ -240,12 +240,12 @@ def test_reachability_bound_includes_uncertainty_at_both_positions(seconds):
         assert script.reachable(first, second, 1500, 1000) == expected
 
 
-def test_conflicting_epoch_is_a_barrier_even_if_one_position_is_unassigned():
+def test_different_positions_are_not_a_country_conflict_when_they_agree_on_country():
     route = samples([(.1, -.001), (.1, .002), (.1, -.001)])
     route.append((.1, -.002, route[1][2], 2))
     fixes, report = script.denoise_samples(route, coast(), gps_radius_meters=500)
-    assert report["inferred"] == 0 and report["conflicting_epochs"] == 1
-    assert fixes[1].country is None
+    assert report["inferred"] == 1 and report["conflicting_epochs"] == 1
+    assert report["excluded"] == 0 and all(f.country == A for f in fixes)
 
 
 def test_slow_or_persistent_error_is_not_identifiable_from_movement_alone():

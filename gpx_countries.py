@@ -23,13 +23,19 @@ DATA_URL = (
     "ca96624a56bd078437bca8184e78163e5039ad19/geojson/ne_10m_admin_0_countries.geojson"
 )
 DEFAULT_COUNTRIES = Path(__file__).resolve().parent / "var/ne_10m_admin_0_countries_ca96624.geojson"
+REFERENCE_VERSION = "9469f09592ced973a3448cf66b6100b741b64c0d"
+REFERENCE_URL = (
+    "https://github.com/wmgeolab/geoBoundaries/raw/" + REFERENCE_VERSION
+    + "/releaseData/gbOpen/{iso3}/ADM0/geoBoundaries-{iso3}-ADM0_simplified.geojson"
+)
+MAX_AUTO_COAST_METERS = 10_000
 
 
-def load_countries(path, download=False):
+def load_countries(path, download=False, url=DATA_URL):
     if not path.exists() and download:
         print("Downloading public country boundaries; GPX coordinates stay local.", file=sys.stderr)
         path.parent.mkdir(parents=True, exist_ok=True)
-        request = Request(DATA_URL, headers={"User-Agent": "boboji-gpx-countries/1.0"})
+        request = Request(url, headers={"User-Agent": "boboji-gpx-countries/1.0"})
         temporary = None
         try:
             with urlopen(request, timeout=60) as response:
@@ -69,7 +75,7 @@ def contains(edges, latitude, longitude):
 def country_lookup(data):
     if data.get("type") != "FeatureCollection" or not data.get("features"):
         raise ValueError("expected a country GeoJSON FeatureCollection")
-    rows = defaultdict(list)
+    rows, iso3 = defaultdict(list), {}
     for feature in data["features"]:
         properties, geometry = feature["properties"], feature["geometry"]
         name = properties.get("NAME_EN") or properties.get("ADMIN") or properties.get("name")
@@ -77,6 +83,9 @@ def country_lookup(data):
                      if properties.get(key) not in (None, "", "-99")), "—")
         if not name:
             raise ValueError("country feature is missing its name")
+        iso3[(name, code)] = next((properties[key] for key in ("ISO_A3_EH", "ISO_A3", "ADM0_A3")
+                                  if isinstance(properties.get(key), str) and len(properties[key]) == 3
+                                  and properties[key].isascii() and properties[key].isalpha()), None)
         if geometry["type"] == "Polygon":
             polygons = [geometry["coordinates"]]
         elif geometry["type"] == "MultiPolygon":
@@ -158,8 +167,25 @@ def country_lookup(data):
 
     lookup.distance_to = distance_to
     lookup.nearby = nearby
+    lookup.iso3 = iso3
     lookup.near = lambda lat, lon, country, radius: distance_to(lat, lon, country, radius) <= radius
     return lookup
+
+
+def load_coastal_reference(country, iso3, cache_dir=None):
+    """Fetch only public country geometry, then reuse the cached copy offline."""
+    if iso3 is None:
+        return None
+    path = (cache_dir or DEFAULT_COUNTRIES.parent / "coastlines") / f"gbopen_{REFERENCE_VERSION}_{iso3}_adm0.geojson"
+    try:
+        data = load_countries(path, download=True, url=REFERENCE_URL.format(iso3=iso3))
+        # Keep Natural Earth's names/codes; this reference supplies geometry.
+        for feature in data["features"]:
+            feature["properties"] = {"NAME_EN": country[0], "ISO_A2": country[1]}
+        return country_lookup(data)
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
+        print(f"Detailed coastline unavailable for {country[0]}; unsupported gaps remain unassigned.", file=sys.stderr)
+        return None
 
 
 def gpx_prefix(root):
@@ -304,52 +330,80 @@ def motion_chunks(paths, ambiguous_times, max_gap_seconds):
     return chunks
 
 
-def infer_coastal_countries(fixes, lookup, radius_meters, report):
-    """Optional mapping tolerance; never erase an observed named country.
+def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None):
+    """Resolve coastal visit gaps using independent map evidence or an override.
 
     Use immutable raw tracking labels as references. Assign only when the same
     country is observed on both sides and is the sole polygon within the
-    supplied tolerance of the actual point. No hypothetical route is invented.
+    tolerance of the actual point. An automatic tolerance is the observed map
+    disagreement at locations independently covered by a reference country
+    polygon. Road curvature and unverified offshore points never train it.
     """
     nearby = getattr(lookup, "nearby", None)
-    if radius_meters is None or nearby is None:
+    if nearby is None or (radius_meters is None and reference is None):
         return
     epochs = defaultdict(list)
     for fix in fixes:
         if fix.time is not None and any(sequence is not None for sequence in fix.sequences):
             epochs[fix.time].append(fix)
     times = sorted(epochs)
+    states = {time: {fix.raw_country for fix in epochs[time] if fix.raw_country is not None} for time in times}
     previous, following, country = {}, {}, None
     for time in times:
-        if len(epochs[time]) > 1:
-            country = None
-        elif epochs[time][0].raw_country is not None:
-            country = epochs[time][0].raw_country
+        labels = states[time]
+        if labels:
+            country = next(iter(labels)) if len(labels) == 1 else None
         previous[time] = country
     country = None
     for time in reversed(times):
-        if len(epochs[time]) > 1:
-            country = None
-        elif epochs[time][0].raw_country is not None:
-            country = epochs[time][0].raw_country
+        labels = states[time]
+        if labels:
+            country = next(iter(labels)) if len(labels) == 1 else None
         following[time] = country
+    candidates = defaultdict(list)
     for time in times:
         country = previous[time]
         if country is None or country != following[time]:
             continue
         for fix in epochs[time]:
-            if fix.raw_country is not None:
+            if fix.raw_country is None:
+                candidates[country].append(fix)
+    for country, points in candidates.items():
+        radius, verified = radius_meters, set()
+        if radius is None:
+            # A discovery ceiling limits automatic mapping inference. Points
+            # in open water cannot enlarge the budget, even if a boat returns.
+            points = [fix for fix in points if nearby(fix.latitude, fix.longitude,
+                                                     MAX_AUTO_COAST_METERS / 1000) == {country}]
+            if not points:
                 continue
-            if nearby(fix.latitude, fix.longitude, radius_meters / 1000) == {country}:
+            detailed = reference(country)
+            if detailed is None:
+                report["coastal_unavailable"].append(country[0])
+                continue
+            verified = {fix for fix in points if detailed(fix.latitude, fix.longitude) == country}
+            if not verified:
+                continue
+            radius = min(MAX_AUTO_COAST_METERS, math.ceil(max(
+                lookup.distance_to(fix.latitude, fix.longitude, country, MAX_AUTO_COAST_METERS / 1000) * 1000
+                for fix in verified)))
+            locations = len({(fix.latitude, fix.longitude) for fix in verified})
+            report["coastal_models"].append((country[0], locations, radius))
+        for fix in points:
+            if nearby(fix.latitude, fix.longitude, radius / 1000) == {country}:
                 fix.country = country
                 report["inferred"] += fix.count
-                depth = lookup.distance_to(fix.latitude, fix.longitude, country, radius_meters / 1000)
+                report["reference_confirmed"] += fix.count if fix in verified else 0
+                depth = lookup.distance_to(fix.latitude, fix.longitude, country, radius / 1000)
                 report["max_inferred_distance_meters"] = max(report["max_inferred_distance_meters"], depth * 1000)
-                report["decisions"].append((fix.time, "Unassigned", country[0], "explicit coastal tolerance", fix.count))
+                reason = ("reference country polygon" if fix in verified else
+                          "reference-derived coastal visit continuity" if radius_meters is None else "explicit coastal tolerance")
+                report["decisions"].append((fix.time, "Unassigned", country[0], reason, fix.count))
 
 
 def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
-                    max_speed_kmh=1500, max_gap_minutes=30, motion_slack_meters=1000):
+                    max_speed_kmh=1500, max_gap_minutes=30, motion_slack_meters=1000,
+                    coastal=True, coastal_reference=None):
     """Conservative screening of timed tracking observations.
 
     Ordinary movement can turn, stop, change mode, cross a border briefly, fly,
@@ -401,11 +455,14 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
     report = {"enabled": True, "input": total, "unique": len(fixes),
               "excluded": sum(fix.count for fix in rejected), "tested": len(tested),
               "conflicting_epochs": len(ambiguous_times), "inferred": 0,
+              "coastal_enabled": coastal, "coastal_automatic": gps_radius_meters is None and coastal_reference is not None,
+              "coastal_models": [], "coastal_unavailable": [], "reference_confirmed": 0,
               "max_inferred_distance_meters": 0, "gps_radius_meters": gps_radius_meters,
               "max_speed_kmh": max_speed_kmh, "max_gap_minutes": max_gap_minutes,
               "motion_slack_meters": motion_slack_meters, "decisions": decisions}
     retained = [fix for fix in fixes if fix not in rejected]
-    infer_coastal_countries(retained, lookup, gps_radius_meters, report)
+    if coastal:
+        infer_coastal_countries(retained, lookup, gps_radius_meters, report, coastal_reference)
     return retained, report
 
 
@@ -414,6 +471,15 @@ def format_denoising(report):
         return "Denoising: off; original country assignments and all GPX points are shown."
     tolerance = ("none supplied; geometric country labels retained" if report["gps_radius_meters"] is None
                  else f"{report['gps_radius_meters']:g} m (explicit mapping assumption, not measured GPS accuracy)")
+    if not report["coastal_enabled"]:
+        tolerance = "off"
+    elif report["coastal_automatic"]:
+        models = "; ".join(f"{name}: {radius:,} m from {locations:,} reference-confirmed locations"
+                           for name, locations, radius in report["coastal_models"])
+        tolerance = "automatic from independent reference country polygons"
+        tolerance += ". " + (models or "No supported mapping band found")
+        if report["coastal_unavailable"]:
+            tolerance += ". Reference unavailable: " + ", ".join(report["coastal_unavailable"])
     return (f"Denoising: on · Input GPX points: {report['input']:,} · Distinct records: {report['unique']:,}\n"
             f"Excluded as motion outliers: {report['excluded']:,} GPX points · "
             f"Distinct tracking fixes checked: {report['tested']:,} · "
@@ -423,6 +489,7 @@ def format_denoising(report):
             f"{report['max_gap_minutes']:g} min maximum gap. These are assumptions, not fitted GPS accuracy.\n"
             f"Coastal tolerance: {tolerance}.\n"
             f"Country assignments inferred: {report['inferred']:,} · "
+            f"Reference-covered GPX points: {report['reference_confirmed']:,} · "
             f"Farthest inferred polygon distance: {report['max_inferred_distance_meters']:.1f} m.\n"
             "Named countries are not erased because a visit is short. Unassigned does not prove offshore.")
 
@@ -526,8 +593,10 @@ def main(argv=None):
                       help="show the alphabetical country summary (default)")
     parser.add_argument("--denoise", action=argparse.BooleanOptionalAction, default=True,
                         help="screen isolated tracking outliers using movement bounds (default: enabled)")
+    parser.add_argument("--coastal-denoise", action=argparse.BooleanOptionalAction, default=True,
+                        help="resolve coastal visit gaps using reference country geometry (default: enabled)")
     parser.add_argument("--gps-radius-meters", type=float,
-                        help="optional explicit coastal mapping tolerance; never inferred from route curvature")
+                        help="override the automatic coastal mapping band with an explicit tolerance")
     parser.add_argument("--max-speed-kmh", type=float, default=1500,
                         help="conservative travel-speed bound for isolated outliers (default: 1500)")
     parser.add_argument("--max-gap-minutes", type=float, default=30,
@@ -550,9 +619,12 @@ def main(argv=None):
             lookup = country_lookup(load_countries(
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
+            reference = (None if args.country_data is not None else
+                         lambda country: load_coastal_reference(country, lookup.iso3.get(country)))
             fixes, report = denoise_samples(chain((first,), points), lookup, enabled=args.denoise,
                                            gps_radius_meters=args.gps_radius_meters, max_speed_kmh=args.max_speed_kmh,
-                                           max_gap_minutes=args.max_gap_minutes, motion_slack_meters=args.motion_slack_meters)
+                                           max_gap_minutes=args.max_gap_minutes, motion_slack_meters=args.motion_slack_meters,
+                                           coastal=args.coastal_denoise, coastal_reference=reference)
             labels = ((fix.country, fix.time, fix.count) for fix in fixes)
             output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
                       else format_table(*summarize_labels(labels)))

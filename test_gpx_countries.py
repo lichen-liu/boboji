@@ -555,6 +555,93 @@ def test_radius_override_can_use_country_support_across_gpx_segment_boundaries()
     assert all(f.country == ("Alpha", "AA") for f in manual)
 
 
+def bay_data(foreign_bridge=False):
+    # Land on both sides of a small bay; the straight bridge crosses water.
+    data = {"type": "FeatureCollection", "features": [
+        {"properties": {"NAME_EN": "Alpha", "ISO_A2": "AA"},
+         "geometry": {"type": "Polygon", "coordinates": [[
+             [-.01, -.01], [.01, -.01], [.01, .01], [.002, .01], [.002, 0],
+             [-.002, 0], [-.002, .01], [-.01, .01], [-.01, -.01]]]}},
+    ]}
+    if foreign_bridge:
+        data["features"].append(
+            {"properties": {"NAME_EN": "Beta", "ISO_A2": "BB"},
+             "geometry": {"type": "Polygon", "coordinates": [ring(-.0015, .00045, .0015, .0007)]}})
+    return data
+
+
+def bay_samples():
+    longitudes = [-.009, -.008, -.007, -.006, -.005, -.003, -.001, .001,
+                  .003, .004, .005, .006, .007, .008, .009]
+    latitudes = [.0005, .0012, .0006, .0011, .0004, .0006, .0004, .0004,
+                 .0005, .0012, .0006, .0011, .0004, .001, .0006]
+    return samples(list(zip(latitudes, longitudes)))
+
+
+@pytest.mark.parametrize("radius", [None, 100])
+def test_nearshore_gap_can_merge_when_the_bridge_is_also_unassigned(radius):
+    route = bay_samples()
+    lookup = script.country_lookup(bay_data())
+    a, b = [script.Fix(lat, lon, time, lookup(lat, lon)) for lat, lon, time, _seq in (route[5], route[8])]
+    assert all(lookup(lat, lon) is None for lat, lon, _time, _seq in route[6:8])
+    assert all(lookup(p.latitude, p.longitude) is None
+               for p in [script.interpolate(a, b, route[index][2]) for index in (6, 7)])
+    fixes, report = script.denoise_samples(route, lookup, gps_radius_meters=radius)
+    assert report["adjusted"] == 2 and report["spikes"] == 0
+    assert all(f.country == ("Alpha", "AA") for f in fixes)
+    assert sum(f.count for f in fixes) == len(route)
+
+
+def test_nearshore_gap_stays_unassigned_if_its_bridge_crosses_another_country():
+    route = bay_samples()
+    lookup = script.country_lookup(bay_data(foreign_bridge=True))
+    fixes, report = script.denoise_samples(route, lookup, gps_radius_meters=1000)
+    assert report["adjusted"] == 0
+    assert sum(f.country is None for f in fixes) == 2
+
+
+@pytest.mark.parametrize("options", [{"gps_max_points": 1}, {"gps_max_minutes": 2}])
+def test_nearshore_bridge_still_requires_short_time_and_few_points(options):
+    fixes, report = script.denoise_samples(bay_samples(), script.country_lookup(bay_data()),
+                                          gps_radius_meters=100, **options)
+    assert report["adjusted"] == 0
+    assert sum(f.country is None for f in fixes) == 2
+
+
+def test_duplicate_short_segment_without_foreign_evidence_does_not_veto_a_correction():
+    route = border_jitter_samples()
+    short = [(lat, lon, time, 2) for lat, lon, time, _sequence in route[6:8]]
+    fixes, report = script.denoise_samples([*route, *short], script.country_lookup(coast_data()))
+    assert report["adjusted"] == 5
+    assert all(f.country == ("Alpha", "AA") for f in fixes)
+    assert sum(f.count for f in fixes) == len(route) + len(short)
+
+
+def test_adjacent_coastal_gaps_are_revisited_without_reclassifying_known_countries():
+    longitudes = [-.0002, -.0004, -.00025, -.00045, -.0002, -.0004]
+    longitudes += [.00005, .00005, -.0002, .00005, .00005, -.0003, .00005, .00005]
+    longitudes += [-.0002, -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
+    route = samples([(.1 + index * .0001, lon) for index, lon in enumerate(longitudes)])
+    fixes, report = script.denoise_samples(route, script.country_lookup(coast_data()))
+    assert report["adjusted"] == 6 and report["spikes"] == 0
+    assert all(f.country == ("Alpha", "AA") for f in fixes)
+    assert sum(f.count for f in fixes) == len(route)
+
+
+@pytest.mark.parametrize("unassigned", [False, True])
+def test_short_segment_with_foreign_evidence_still_vetoes_a_correction(unassigned):
+    route = border_jitter_samples()
+    data = coast_data(with_neighbor=True)
+    if unassigned:
+        data["features"][1]["geometry"]["coordinates"] = [ring(.0003, -1, 1, 1)]
+    lat, lon, time, _seq = route[6]
+    short = [(lat, lon, time, 2), (lat + .00005, .0004, time + timedelta(seconds=30), 2)]
+    fixes, _report = script.denoise_samples([*route, *short], script.country_lookup(data), gps_radius_meters=1000)
+    shared = next(f for f in fixes if f.time == time)
+    assert shared.country == (None if unassigned else ("Beta", "BB"))
+    assert shared.count == 2
+
+
 @pytest.mark.parametrize("flags", [
     ["--gps-radius-meters", "0"], ["--gps-radius-meters", "nan"],
     ["--gps-radius-meters", "inf"], ["--gps-max-minutes", "-1"],

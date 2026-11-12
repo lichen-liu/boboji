@@ -182,7 +182,7 @@ def summarize(points, lookup):
     return countries, total, unassigned
 
 
-def format_table(countries, total, unassigned):
+def format_table(countries, total, unassigned, *, chronological=False):
     headers = ("Country / territory", "Code", "GPX points", "First recorded (UTC)", "Last recorded (UTC)")
 
     def timestamp(value):
@@ -191,10 +191,15 @@ def format_table(countries, total, unassigned):
         text = value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
         return text[:-1].rstrip("0") + "Z" if "." in text else text
 
+    def row_order(item):
+        country, (_, first, _) = item
+        if chronological:
+            return (country is None, first is None,
+                    first or datetime.max.replace(tzinfo=timezone.utc), country or ("", ""))
+        return country is None, country or ("", "")
+
     rows = []
-    for country, (count, first, last) in sorted(
-        countries.items(), key=lambda item: (item[0] is None, item[0] or ("", ""))
-    ):
+    for country, (count, first, last) in sorted(countries.items(), key=row_order):
         name, code = country or ("Unassigned / offshore", "—")
         rows.append((name, code, f"{count:,}", timestamp(first), timestamp(last)))
     widths = [max(len(row[column]) for row in [headers, *rows]) for column in range(len(headers))]
@@ -206,6 +211,8 @@ def format_table(countries, total, unassigned):
     count = sum(country is not None for country in countries)
     lines += ["", f"Countries/territories: {count} · GPX points: {total:,} · Unassigned: {unassigned:,}",
               "First/last are recorded timestamps, not continuous stays. — = no recorded timestamp."]
+    if chronological:
+        lines.append("Ordered by first recorded UTC timestamp; undated countries and unassigned points follow.")
     return "\n".join(lines)
 
 
@@ -213,6 +220,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gpx", type=Path, help="input .gpx file")
     parser.add_argument("--country-data", type=Path, help="existing Natural Earth country GeoJSON (offline)")
+    view = parser.add_mutually_exclusive_group()
+    view.add_argument("--chronological", dest="chronological", action="store_true",
+                      help="order the country summary by first recorded UTC timestamp")
+    view.add_argument("--summary", dest="chronological", action="store_false",
+                      help="show the alphabetical country summary (default)")
+    parser.set_defaults(chronological=False)
     args = parser.parse_args(argv)
     try:
         with args.gpx.open("rb") as source:
@@ -224,7 +237,7 @@ def main(argv=None):
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
             result = summarize(chain((first,), points), lookup)
-        print(format_table(*result))
+        print(format_table(*result, chronological=args.chronological))
     except (OSError, ValueError, ET.ParseError) as error:
         parser.exit(2, f"error: {error}\n")
     except (KeyError, TypeError, IndexError, AttributeError):

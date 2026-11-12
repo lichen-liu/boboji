@@ -354,8 +354,8 @@ def test_sustained_offshore_transit_and_short_coherent_country_crossing_remain()
     data["features"][0]["geometry"] = {"type": "MultiPolygon", "coordinates": [
         [ring(-1, -1, 0, 1)], [ring(.01, -1, 1, 1)]]}
     data["features"][1]["geometry"]["coordinates"] = [ring(0, -1, .01, 1)]
-    route = samples([(.1, lon) for lon in [-.04, -.03, -.02, -.01, .005, .02, .03, .04, .05]])
-    fixes, report = script.denoise_samples(route, script.country_lookup(data))
+    route = samples([(.1, lon) for lon in [-.05, -.04, -.03, -.02, -.01, .005, .02, .03, .04, .05]])
+    fixes, report = script.denoise_samples(route, script.country_lookup(data), gps_radius_meters=2000)
     assert sum(fix.country == ("Beta", "BB") for fix in fixes) == 1
     assert report["adjusted"] == report["spikes"] == 0
 
@@ -383,7 +383,7 @@ def test_no_denoise_preserves_equal_time_order_and_every_point():
 
 
 def test_fitted_filter_scales_with_sample_rate_and_distance():
-    # The same physical pattern should not depend on fixed minutes/metres.
+    # Within the explicit time cap, the inferred radius scales with the data.
     results = []
     for scale, step in [(1, 60), (10, 600)]:
         data = coast_data()
@@ -393,9 +393,198 @@ def test_fitted_filter_scales_with_sample_rate_and_distance():
                       -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
         route = samples([(.1 + index * .0001, lon * scale)
                          for index, lon in enumerate(longitudes)], step_seconds=step)
-        fixes, report = script.denoise_samples(route, script.country_lookup(data))
+        fixes, report = script.denoise_samples(route, script.country_lookup(data), gps_max_minutes=30)
         results.append(([fix.country for fix in fixes], report["adjusted"]))
     assert results[0] == results[1]
+
+
+def border_jitter_samples(depth=.00005, count=3):
+    before = [-.0002, -.0004, -.00025, -.00045, -.0002, -.0004]
+    after = [-.0002, -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
+    return samples([(.1 + index * .0001, lon) for index, lon in
+                    enumerate([*before, *([depth] * count), *after])])
+
+
+@pytest.mark.parametrize("with_neighbor", [False, True])
+def test_short_sparse_border_run_uses_polygon_distance_and_merges_before_grouping(with_neighbor):
+    route = border_jitter_samples()
+    fixes, report = script.denoise_samples(route, script.country_lookup(coast_data(with_neighbor)))
+    periods, total, unassigned, _ = script.group_timeline_labels((f.country, f.time, f.count) for f in fixes)
+    assert report["adjusted"] == 3 and report["spikes"] == 0
+    assert len(periods) == 1 and periods[0][0] == ("Alpha", "AA")
+    assert total == len(route) and unassigned == 0
+    assert 5 < report["max_border_distance_meters"] < 6
+    assert "GPS border filter:" in script.format_denoising(report)
+
+
+def test_distance_is_to_requested_polygon_not_a_centroid_or_first_matching_country():
+    data = coast_data(with_neighbor=True)
+    lookup = script.country_lookup(data)
+    assert .110 < lookup.distance_to(0, .001, ("Alpha", "AA")) < .112
+    assert lookup.distance_to(0, -.5, ("Alpha", "AA")) == 0
+    assert lookup.distance_to(0, .001, ("Alpha", "AA"), limit=.1) == float("inf")
+    # Both polygons contain this point; lookup order must not change distance.
+    data["features"][1]["geometry"]["coordinates"] = [ring(-.5, -1, 1, 1)]
+    lookup = script.country_lookup(data)
+    assert lookup(0, -.25) == ("Alpha", "AA")
+    assert lookup.distance_to(0, -.25, ("Beta", "BB")) == 0
+
+
+def test_radius_override_has_a_measurable_border_distance_cutoff():
+    route = border_jitter_samples(depth=.005)
+    lookup = script.country_lookup(coast_data(with_neighbor=True))
+    small, small_report = script.denoise_samples(route, lookup, gps_radius_meters=500)
+    large, large_report = script.denoise_samples(route, lookup, gps_radius_meters=600)
+    assert sum(f.country == ("Beta", "BB") for f in small) == 3
+    assert small_report["adjusted"] == 0
+    assert all(f.country == ("Alpha", "AA") for f in large)
+    assert large_report["adjusted"] == 3
+    assert 550 < large_report["max_border_distance_meters"] < 560
+    assert "600 m (override)" in script.format_denoising(large_report)
+
+
+def test_suspect_points_do_not_inflate_the_automatic_gps_radius():
+    lookup = script.country_lookup(coast_data(with_neighbor=True))
+    _shallow, first = script.denoise_samples(border_jitter_samples(depth=.00005), lookup)
+    deep, second = script.denoise_samples(border_jitter_samples(depth=.005), lookup)
+    assert first["gps_radii"] == pytest.approx(second["gps_radii"])
+    assert first["adjusted"] == 3 and second["adjusted"] == 0
+    assert sum(f.country == ("Beta", "BB") for f in deep) == 3
+
+
+@pytest.mark.parametrize("options", [{"gps_max_points": 2}, {"gps_max_minutes": 3}])
+def test_short_time_and_few_points_are_both_required(options):
+    fixes, report = script.denoise_samples(border_jitter_samples(),
+                                          script.country_lookup(coast_data(with_neighbor=True)), **options)
+    assert report["adjusted"] == 0
+    assert sum(f.country == ("Beta", "BB") for f in fixes) == 3
+
+
+def test_duplicate_gpx_points_do_not_count_as_independent_border_support():
+    route = border_jitter_samples()
+    repeated = [point for point in route for _ in range(100)]
+    fixes, report = script.denoise_samples(repeated, script.country_lookup(coast_data(with_neighbor=True)))
+    assert report["adjusted"] == 300
+    assert sum(f.count for f in fixes) == len(repeated)
+    assert all(f.country == ("Alpha", "AA") for f in fixes)
+
+
+def test_gps_filter_requires_a_return_to_the_previous_country():
+    route = border_jitter_samples()
+    # Continue in Beta instead of returning; even a broad radius cannot turn
+    # a new country arrival into a return to Alpha.
+    route = route[:9]
+    fixes, report = script.denoise_samples(route, script.country_lookup(coast_data(with_neighbor=True)),
+                                          gps_radius_meters=1000)
+    assert report["adjusted"] == 0
+    assert sum(f.country == ("Beta", "BB") for f in fixes) == 3
+
+
+def test_alternating_short_runs_do_not_swap_noise_into_the_surrounding_country():
+    # Three short Beta fixes, three Alpha fixes, two Beta fixes, then Alpha.
+    # The short Alpha interval must not get reassigned to Beta while the two
+    # Beta bursts are being corrected to the well-supported Alpha country.
+    longitudes = [-.0002, -.0004, -.00025, -.00045, -.0002, -.0004]
+    longitudes += [.005] * 3 + [-.0002, -.0004, -.00025] + [.005] * 2
+    longitudes += [-.0002, -.00045, -.00025, -.0004, -.0002, -.0004, -.0003]
+    route = samples([(.1 + index * .0001, lon) for index, lon in enumerate(longitudes)])
+    fixes, report = script.denoise_samples(route, script.country_lookup(coast_data(with_neighbor=True)),
+                                          gps_radius_meters=600)
+    assert report["adjusted"] == 5 and report["spikes"] == 0
+    assert all(f.country == ("Alpha", "AA") for f in fixes)
+
+
+def test_unsupported_alternating_countries_remain_uncertain_even_with_an_override():
+    route = samples([(.1 + index * .0001, -.00005 if index % 2 else .00005)
+                     for index in range(15)])
+    lookup = script.country_lookup(coast_data(with_neighbor=True))
+    fixes, report = script.denoise_samples(route, lookup, gps_radius_meters=1000)
+    assert report["adjusted"] == report["spikes"] == 0
+    assert [f.country for f in fixes] == [lookup(lat, lon) for lat, lon, _time, _seq in route]
+
+
+@pytest.mark.parametrize("radius, corrected", [(None, True), (5, False), (10, True)])
+def test_isolated_near_border_marker_is_reassigned_instead_of_discarded(radius, corrected):
+    route = border_jitter_samples(count=0)
+    orphan = (.10065, .00005, route[6][2] + timedelta(seconds=30), 2)
+    fixes, report = script.denoise_samples([*route, orphan, orphan],
+                                          script.country_lookup(coast_data(with_neighbor=True)),
+                                          gps_radius_meters=radius, gps_max_points=1)
+    marker = next(fix for fix in fixes if fix.time == orphan[2])
+    assert marker.country == (("Alpha", "AA") if corrected else ("Beta", "BB"))
+    assert marker.count == 2 and sum(f.count for f in fixes) == len(route) + 2
+    assert report["isolated"] == report["spikes"] == 0
+    assert report["adjusted"] == (2 if corrected else 0)
+
+
+def test_supported_nearby_country_path_vetoes_an_isolated_border_correction():
+    route = border_jitter_samples(count=0)
+    other = samples([(.1 + index * .0001, .00005) for index in range(len(route))], sequence=2)
+    orphan = (.10065, .00005, route[6][2] + timedelta(seconds=30), 3)
+    fixes, report = script.denoise_samples([*route, *other, orphan],
+                                          script.country_lookup(coast_data(with_neighbor=True)),
+                                          gps_radius_meters=1000)
+    marker = next(fix for fix in fixes if fix.time == orphan[2])
+    assert marker.country == ("Beta", "BB")
+    assert report["adjusted"] == report["isolated"] == 0
+
+
+def test_isolated_border_marker_needs_observations_on_both_sides():
+    route = border_jitter_samples(count=0)
+    orphan = (.09995, .00005, route[0][2] - timedelta(seconds=30), 2)
+    fixes, report = script.denoise_samples([*route, orphan],
+                                          script.country_lookup(coast_data(with_neighbor=True)),
+                                          gps_radius_meters=1000)
+    marker = next(fix for fix in fixes if fix.time == orphan[2])
+    assert marker.country == ("Beta", "BB")
+    assert report["adjusted"] == report["isolated"] == 0
+
+
+def test_radius_override_can_use_country_support_across_gpx_segment_boundaries():
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    before = [(lat, lon, time - timedelta(minutes=8), seq) for lat, lon, time, seq in
+              samples([(.1, -.0003)] * 8)]
+    region = samples([(.1, lon) for lon in [-.0003, -.0003, .005, .005, .005,
+                                          -.0003, -.0003, -.0003]], sequence=2)
+    assert region[0][2] == base
+    lookup = script.country_lookup(coast_data(with_neighbor=True))
+    auto, auto_report = script.denoise_samples([*before, *region], lookup)
+    manual, manual_report = script.denoise_samples([*before, *region], lookup, gps_radius_meters=600)
+    assert auto_report["adjusted"] == 0 and sum(f.country == ("Beta", "BB") for f in auto) == 3
+    assert manual_report["adjusted"] == 3
+    assert all(f.country == ("Alpha", "AA") for f in manual)
+
+
+@pytest.mark.parametrize("flags", [
+    ["--gps-radius-meters", "0"], ["--gps-radius-meters", "nan"],
+    ["--gps-radius-meters", "inf"], ["--gps-max-minutes", "-1"],
+    ["--gps-max-minutes", "nan"], ["--gps-max-minutes", "inf"],
+    ["--gps-max-points", "0"], ["--gps-max-points", "-1"],
+])
+def test_gps_filter_invalid_limits_fail_before_file_access(flags, capsys):
+    with pytest.raises(SystemExit) as error:
+        script.main(["missing.gpx", *flags])
+    assert error.value.code == 2
+    assert "positive" in capsys.readouterr().err
+
+
+def test_gps_filter_cli_override_and_raw_opt_out(tmp_path, capsys):
+    boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
+    boundaries.write_text(json.dumps(coast_data(with_neighbor=True)))
+    route = border_jitter_samples(depth=.005)
+    body = ''.join(f'<trkpt lat="{lat}" lon="{lon}"><time>{script.timestamp(time)}</time></trkpt>'
+                   for lat, lon, time, _sequence in route)
+    original = gpx('<trk><trkseg>' + body + '</trkseg></trk>')
+    source.write_bytes(original)
+    arguments = [str(source), "--country-data", str(boundaries), "--timeline", "--gps-radius-meters", "600"]
+    assert script.main(arguments) == 0
+    output = capsys.readouterr().out
+    assert "| Beta" not in output and "Boundary assignments adjusted: 3" in output
+    assert "600 m (override)" in output
+    assert script.main([*arguments, "--no-denoise"]) == 0
+    output = capsys.readouterr().out
+    assert "| Beta" in output and "Denoising: off" in output
+    assert source.read_bytes() == original
 
 
 @pytest.mark.parametrize("body", [

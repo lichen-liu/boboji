@@ -12,7 +12,7 @@ import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from functools import lru_cache
-from itertools import chain
+from itertools import chain, takewhile
 from pathlib import Path
 from statistics import median
 from typing import Optional
@@ -109,12 +109,20 @@ def country_lookup(data):
                     return country
         return None
 
-    def near(latitude, longitude, country, radius):
-        # Only inspect edges within the fitted uncertainty radius. Distances use
-        # a local tangent plane, so this is an approximate geometric distance.
-        dy = radius / 111.195
+    def distance_to(latitude, longitude, country, limit=math.inf):
+        """Approximate kilometres to a country polygon; zero inside it.
+
+        A finite limit restricts the search; infinity means no edge was found
+        within that distance. The local tangent plane is intended for nearby
+        borders, not surveying or distances across continents.
+        """
+        for west, south, east, north, label, edges in rows.get(math.floor(latitude), ()):
+            if (label == country and west <= longitude <= east and south <= latitude <= north
+                    and contains(edges, latitude, longitude)):
+                return 0.0
+        dy = min(180, limit / 111.195)
         sx = 111.195 * math.cos(math.radians(latitude))
-        seen = set()
+        seen, best = set(), math.inf
         for band in range(max(-90, math.floor(latitude - dy)), min(90, math.floor(latitude + dy)) + 1):
             for _west, _south, _east, _north, label, edges in rows.get(band, ()):
                 if label != country:
@@ -131,11 +139,13 @@ def country_lookup(data):
                     bx, by = (x2 - shift) * sx, (y2 - latitude) * 111.195
                     ex, ey = bx - ax, by - ay
                     fraction = max(0, min(1, -(ax * ex + ay * ey) / (ex * ex + ey * ey))) if ex or ey else 0
-                    if (ax + fraction * ex) ** 2 + (ay + fraction * ey) ** 2 <= radius ** 2:
-                        return True
-        return False
+                    squared = (ax + fraction * ex) ** 2 + (ay + fraction * ey) ** 2
+                    if squared <= limit * limit:
+                        best = min(best, squared)
+        return math.sqrt(best)
 
-    lookup.near = near
+    lookup.distance_to = distance_to
+    lookup.near = lambda lat, lon, country, radius: distance_to(lat, lon, country, radius) <= radius
     return lookup
 
 
@@ -283,7 +293,23 @@ def motion_profile(fixes, fallback=None):
             "error": upper_fence(errors), "cadence": median(gaps)}
 
 
-def denoise_samples(samples, lookup, enabled=True):
+def gps_border_radius(previous, following, gap, max_minutes, override):
+    """Fit only stable samples on either side, excluding the suspect run."""
+    if not previous or not following:
+        return None
+    errors = []
+    for side, anchor in ((previous[-8:], previous[-1]), (following[:8], following[0])):
+        side = [fix for fix in side if abs((fix.time - anchor.time).total_seconds()) <= max_minutes * 60]
+        for first, center, last in zip(side, side[1:], side[2:]):
+            if max((center.time - first.time).total_seconds(), (last.time - center.time).total_seconds()) <= gap:
+                errors.append(distance(center, interpolate(first, last, center.time)))
+    if len(errors) < 3:
+        return None
+    return upper_fence(errors) if override is None else override / 1000
+
+
+def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
+                    gps_max_minutes=10, gps_max_points=5):
     """Return classified fixes and an auditable count of conservative changes.
 
     Models are fitted separately to GPX track segments/routes, never to country
@@ -308,7 +334,9 @@ def denoise_samples(samples, lookup, enabled=True):
             paths[sequence][key] = fix
     fixes = list(unique.values())
     report = {"enabled": enabled, "input": total, "unique": len(fixes),
-              "isolated": 0, "spikes": 0, "adjusted": 0}
+              "isolated": 0, "spikes": 0, "adjusted": 0, "gps_radii": [],
+              "gps_radius_meters": gps_radius_meters, "gps_max_minutes": gps_max_minutes,
+              "gps_max_points": gps_max_points, "max_border_distance_meters": 0}
     profiles = {sequence: profile for sequence, items in paths.items()
                 if (profile := motion_profile(items.values())) is not None}
     report["fitted_paths"] = len(profiles)
@@ -334,11 +362,22 @@ def denoise_samples(samples, lookup, enabled=True):
                 spike_votes[b].add(sequence)
     rejected = {fix for fix, votes in spike_votes.items() if votes == support[fix]}
     report["spikes"] = sum(fix.count for fix in rejected)
+    # An explicit radius supplies the missing distance estimate for sparse
+    # local context, but still needs a well-supported surrounding country.
+    country_runs = []
+    for fix in sorted((f for f in fixes if f.time is not None and f not in rejected), key=lambda f: f.time):
+        if not country_runs or country_runs[-1][0].country != fix.country:
+            country_runs.append([fix])
+        else:
+            country_runs[-1].append(fix)
+    stable = {fix for run in country_runs if run[0].country is not None and len({f.time for f in run}) >= 5
+              for fix in run}
 
     # Compare isolated visits/endpoints with independently supported paths.
     supported = sorted(((fix.time, sequence) for sequence, p in profiles.items()
                         for fix in p["fixes"] if fix not in rejected), key=lambda item: item[0])
     times = [time for time, _sequence in supported]
+    distance_to = getattr(lookup, "distance_to", None)
     for fix in fixes:
         if fix.time is None or fix in rejected or any(len(paths[s]) > 1 for s in fix.sequences):
             continue
@@ -346,7 +385,7 @@ def denoise_samples(samples, lookup, enabled=True):
         neighboring_times = {time for time, _sequence in supported[max(0, index - 2):index + 2]}
         candidates = {sequence for time in neighboring_times
                       for _time, sequence in supported[bisect_left(times, time):bisect_right(times, time)]}
-        conflicts = []
+        conflicts, border_votes = [], []
         for sequence in candidates:
             p = profiles[sequence]
             index_in_path = bisect_left(p["times"], fix.time)
@@ -369,14 +408,38 @@ def denoise_samples(samples, lookup, enabled=True):
             neighbor = min((a, b), key=lambda item: abs((fix.time - item.time).total_seconds()))
             # Account for both fitted position scatter and possible movement
             # since the closest supported timestamp (speeds are in km/second).
-            conflicts.append(distance(fix, predicted) > local["error"] + 1e-6
-                             and distance(fix, neighbor) > local["error"] + local["speed"] * gap + 1e-6)
+            conflict = (distance(fix, predicted) > local["error"] + 1e-6
+                        and distance(fix, neighbor) > local["error"] + local["speed"] * gap + 1e-6)
+            conflicts.append(conflict)
+            vote, country = None, a.country
+            if (not conflict and distance_to is not None and country is not None and country != fix.country
+                    and b.country == country and a.time <= fix.time <= b.time
+                    and (b.time - a.time).total_seconds() <= gps_max_minutes * 60
+                    and lookup(predicted.latitude, predicted.longitude) == country):
+                before = list(takewhile(lambda item: item.country == country,
+                                        reversed(p["fixes"][max(0, index_in_path - 8):index_in_path])))
+                after = list(takewhile(lambda item: item.country == country,
+                                       p["fixes"][index_in_path:index_in_path + 8]))
+                radius = gps_border_radius(list(reversed(before)), after, p["gap"],
+                                           gps_max_minutes, gps_radius_meters)
+                if radius is None and gps_radius_meters is not None and (a in stable or b in stable):
+                    radius = gps_radius_meters / 1000
+                if radius is not None:
+                    report["gps_radii"].append(radius * 1000)
+                    depth = distance_to(fix.latitude, fix.longitude, country, radius + 1e-6)
+                    if depth <= radius + 1e-6:
+                        vote = country, depth
+            border_votes.append(vote)
         if conflicts and all(conflicts):
             rejected.add(fix)
             report["isolated"] += fix.count
+        elif border_votes and all(border_votes) and len({vote[0] for vote in border_votes}) == 1:
+            fix.country = border_votes[0][0]
+            report["adjusted"] += fix.count
+            report["max_border_distance_meters"] = max(report["max_border_distance_meters"],
+                                                       max(vote[1] for vote in border_votes) * 1000)
 
-    near = getattr(lookup, "near", None)
-    proposals = defaultdict(dict)
+    proposals, depths = defaultdict(dict), {}
     for sequence, p in profiles.items():
         if not p["fitted"]:
             continue
@@ -390,23 +453,49 @@ def denoise_samples(samples, lookup, enabled=True):
         for previous, middle, following in zip(runs, runs[1:], runs[2:]):
             a, b = previous[-1], following[0]
             country = a.country
-            if country is None or b.country != country or near is None:
+            if country is None or b.country != country or distance_to is None:
                 continue
-            if ((middle[-1].time - middle[0].time).total_seconds() > p["cadence"]
-                    or (middle[0].time - a.time).total_seconds() > p["gap"]
-                    or (b.time - middle[-1].time).total_seconds() > p["gap"]):
+            # Include the bracketing samples in the time bound: a single fix
+            # after a long gap is not evidence of a very short excursion.
+            if len(middle) > gps_max_points or (b.time - a.time).total_seconds() > gps_max_minutes * 60:
                 continue
-            if all(near(fix.latitude, fix.longitude, country, p["error"])
-                   and lookup(predicted.latitude, predicted.longitude) == country
-                   and distance(fix, predicted) <= p["error"] + 1e-6
-                   for fix in middle for predicted in [interpolate(a, b, fix.time)]):
-                for fix in middle:
-                    proposals[fix][sequence] = country
+            predicted = [interpolate(a, b, fix.time) for fix in middle]
+            # A coherent crossing supported by the bridge should survive even
+            # if it is brief. A majority must support the previous country.
+            if sum(lookup(fix.latitude, fix.longitude) == country for fix in predicted) <= len(middle) / 2:
+                continue
+            radii = []
+            override = gps_radius_meters / 1000 if gps_radius_meters is not None else None
+            radius = gps_border_radius(previous, following, p["gap"], gps_max_minutes, gps_radius_meters)
+            if radius is not None:
+                radii.append(radius)
+            elif override is not None and (a in stable or b in stable):
+                radii.append(override)
+            # Retain the existing one-interval rule when a side supplies stable
+            # country support and every interpolated position agrees. This also
+            # avoids flipping both sides of an unsupported A/B/A/B oscillation.
+            strict_radius = p["error"] if override is None else override
+            if (max(len(previous), len(following)) >= 5
+                    and (middle[-1].time - middle[0].time).total_seconds() <= p["cadence"]
+                    and (middle[0].time - a.time).total_seconds() <= p["gap"]
+                    and (b.time - middle[-1].time).total_seconds() <= p["gap"]
+                    and all(lookup(fix.latitude, fix.longitude) == country for fix in predicted)
+                    and all(distance(fix, estimate) <= strict_radius + 1e-6 for fix, estimate in zip(middle, predicted))):
+                radii.append(strict_radius)
+            for radius in dict.fromkeys(radii):
+                report["gps_radii"].append(radius * 1000)
+                distances = [distance_to(fix.latitude, fix.longitude, country, radius + 1e-6) for fix in middle]
+                if max(distances) <= radius + 1e-6:
+                    for fix in middle:
+                        proposals[fix][sequence] = country
+                    depths.update(zip(middle, distances))
+                    break
     for fix, votes in proposals.items():
         countries = set(votes.values())
         if set(votes) == support[fix] and len(countries) == 1:
             fix.country = countries.pop()
             report["adjusted"] += fix.count
+            report["max_border_distance_meters"] = max(report["max_border_distance_meters"], depths[fix] * 1000)
     return [fix for fix in fixes if fix not in rejected], report
 
 
@@ -418,6 +507,16 @@ def format_denoising(report):
             f"(isolated conflicts: {report['isolated']:,}; path spikes: {report['spikes']:,}) · "
             f"Boundary assignments adjusted: {report['adjusted']:,}\n"
             "Limits use observed cadence, speeds, and position scatter; uncertain/offshore points remain.")
+    radii = report["gps_radii"]
+    if report["gps_radius_meters"] is not None:
+        radius = f"{report['gps_radius_meters']:g} m (override)"
+    elif radii:
+        radius = f"auto, median {median(radii):.1f} m (range {min(radii):.1f}–{max(radii):.1f} m)"
+    else:
+        radius = "auto (insufficient eligible context)"
+    text += (f"\nGPS border filter: <= {report['gps_max_minutes']:g} min between surrounding samples, "
+             f"<= {report['gps_max_points']} distinct timestamps; radius {radius}.\n"
+             f"Farthest adjusted point from previous country polygon: {report['max_border_distance_meters']:.1f} m.")
     if not report["fitted_paths"]:
         text += "\nInsufficient supported path context; observations left unchanged."
     return text
@@ -514,8 +613,19 @@ def main(argv=None):
                       help="show the alphabetical country summary (default)")
     parser.add_argument("--denoise", action=argparse.BooleanOptionalAction, default=True,
                         help="filter conflicting observations and smooth supported boundary jitter (default: enabled)")
+    parser.add_argument("--gps-radius-meters", type=float,
+                        help="override the inferred GPS border-distance threshold in metres (default: auto)")
+    parser.add_argument("--gps-max-minutes", type=float, default=10,
+                        help="maximum time between samples surrounding a border excursion (default: 10)")
+    parser.add_argument("--gps-max-points", type=int, default=5,
+                        help="maximum distinct timestamps in a border excursion (default: 5)")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
+    for flag, value in (("--gps-radius-meters", args.gps_radius_meters), ("--gps-max-minutes", args.gps_max_minutes)):
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            parser.error(f"{flag} must be a finite positive number")
+    if args.gps_max_points < 1:
+        parser.error("--gps-max-points must be a positive integer")
     try:
         with args.gpx.open("rb") as source:
             points = gpx_samples(source)
@@ -525,7 +635,9 @@ def main(argv=None):
             lookup = country_lookup(load_countries(
                 args.country_data or DEFAULT_COUNTRIES, download=args.country_data is None
             ))
-            fixes, report = denoise_samples(chain((first,), points), lookup, enabled=args.denoise)
+            fixes, report = denoise_samples(chain((first,), points), lookup, enabled=args.denoise,
+                                           gps_radius_meters=args.gps_radius_meters,
+                                           gps_max_minutes=args.gps_max_minutes, gps_max_points=args.gps_max_points)
             labels = ((fix.country, fix.time, fix.count) for fix in fixes)
             output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
                       else format_table(*summarize_labels(labels)))

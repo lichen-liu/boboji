@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.cloudflared/
+tunnel-token
+
+# Personal exports and generated tracks belong outside version control.
+data/
+output/
+*.gpx
+*.kml
+*.kmz
+*.zip
+Timeline.json
+location-history.json
+Records.json
+Location History.json
+Semantic Location History/

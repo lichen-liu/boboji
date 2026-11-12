@@ -45,48 +45,58 @@ Spans run from the first to last recorded point in each period and can include
 sampling gaps. The timeline flag replaces `--chronological`.
 Equal-time conflicts retain input order; rows do not resolve which position is true.
 
-`--denoise` is enabled by default in both views. It combines coastal country-visit
-continuity with a conservative screen for **isolated, gross motion outliers**
-in recorded tracks. A point is excluded only if both incoming
-and outgoing displacements exceed the configured movement bound, the bypass
-is feasible, and two surrounding observations on each side provide consistent
-context. Turns, stops, detours, changes of transport, short visits, and water
-travel are normal; their shape or duration alone does not justify removal.
+`--denoise` is enabled by default in both views. It checks physical movement,
+independent border maps, and coastal country-visit continuity before grouping.
+Turns, stops, detours, transport changes, brief visits, and boat travel are
+normal; duration or sampling density alone never proves noise.
 
-The defaults allow **1,000 km/h**, plus **10 km per position**, with a maximum
-recording gap of **one hour**. These are configurable policy assumptions,
-not learned GPS accuracy. `--max-speed-kmh`, `--motion-slack-meters`, and
-`--max-gap-minutes` (default 60) expose them. Lowering the speed bound can erase
-real faster travel. No motion test crosses a GPX segment boundary or a gap over
-the limit. Endpoints, sparse tracks, conflicting simultaneous locations, and
-distinct overlapping recordings are retained when context is insufficient.
-Waypoints and route points remain in the table but are not motion evidence.
-Exact duplicate tracking records preserve counts without adding evidence.
+The defaults are **1,000 km/h**, **10 km allowance per position**, and a maximum
+recording gap of **one hour**. Configure them with `--max-speed-kmh`,
+`--position-allowance-meters` (alias `--motion-slack-meters`), and
+`--max-gap-minutes` (default 60). The position allowance now also applies to
+automatic coastal country inference; it is a policy budget, not measured GPS
+accuracy. The Python API keeps the keyword `motion_slack_meters` for compatibility.
 
-Coastal handling is **on by default**. When an unassigned gap has the same
-raw country before and after it, the script checks an independent reference
-country polygon. Locations covered by that source reveal disagreement with the baseline
-coastline. Their maximum observed distance,
-rounded up to a metre, supplies a country-specific mapping band. Only actual
-points within that band, with no other country polygon nearby, can join the
-surrounding country visit. Discovery is capped at 10 km; unverified open-water
-points cannot train or enlarge the band. A country with no reference-covered
-locations gets no automatic tolerance.
+Within a continuous track, an isolated motion outlier needs impossible incoming
+and outgoing legs, a feasible bypass, and two supporting observations on each
+side. Isolated markers in their own GPX segments are additionally checked against
+the surrounding chronological tracking log: the bypass must be feasible, both
+legs to the marker impossible, and either an actual continuous track must bracket
+it or another neighboring epoch must corroborate the track. All surrounding
+position alternatives must agree physically. Logging breaks alone do not justify
+an impossible teleport. This cross-segment check assumes one traveler's history;
+coherent competing recordings remain unresolved. Waypoints and planned routes
+are not motion evidence, and exact duplicates do not add evidence.
 
-This resolves coastline mismatches before grouping countries and timestamps.
-Different coordinates at one timestamp do not imply different countries;
-conflicting **named countries** still block country continuity. There is no
-short-visit or sample-count cutoff, and named foreign-country visits remain
-intact. Inferred labels never become evidence for another correction.
+Border-map verification is **on by default**. For a return excursion A → B → A
+within 10 km of A's polygon, a B point is relabeled only when A's independent
+reference polygon includes it **and B's reference polygon excludes it**. Missing
+or overlapping reference evidence preserves the original named country. There
+is no short-duration or point-count cutoff; a genuine brief B visit supported
+by its own reference map stays visible. `--no-border-denoise` disables this stage.
 
-`--no-coastal-denoise` disables coastal inference while retaining the motion
-screen. `--no-denoise` restores all raw points and labels. The optional
-`--gps-radius-meters 1000` uses a manual 1 km mapping tolerance instead of
-reference calibration. No radius is estimated from road curvature. An inferred
-country means approximate visit context, including possible nearby water
-excursions; it does not prove that every point was on land or establish GPS
-accuracy. Reference administrative polygons can also include water; coverage
-is not proof of land presence. Coordinates remain unchanged.
+Coastal handling is also **on by default**. For unassigned points bracketed by
+the same country, reference-covered locations reveal the baseline coastline's
+observed disagreement. The automatic band is the larger of that observed map
+budget and the configured position allowance, capped at **10 km**. Unverified
+points never train the map budget. A reference must be available; without any
+covered calibration locations, only the explicitly configured position allowance
+can supply the budget. No competing country may be within the discovery band.
+A manual `--gps-radius-meters N` instead uses exactly N metres for coastal
+inference and overrides the position allowance for that stage.
+
+Country context uses original map labels plus independent, verified border-map
+corrections. Guessed coastal labels never become anchors. Distinct coordinates
+at one timestamp do not imply different countries; conflicting named countries
+still block country continuity. There is no coastal duration or sample-count
+cutoff. `--no-coastal-denoise` disables coastal inference, and `--no-denoise`
+restores all raw points and labels. Manual coastal radii bypass coastal
+calibration; the separate border stage can still load reference maps.
+
+These labels describe approximate visit context, including possible nearshore
+water excursions. They do not prove land presence, measured GPS accuracy, or
+an immigration visit. Reference administrative polygons can include water.
+Coordinates in the input file remain unchanged.
 
 The footer distinguishes excluded motion outliers from inferred country labels,
 states the bounds, and reports how many tracking fixes could be checked.
@@ -111,7 +121,7 @@ infer countries between samples. Unmatched points are counted separately; “Una
 Country/territory definitions and approximate borders follow Natural Earth;
 `10m` denotes a 1:10 million map scale, not ten-metre positional accuracy.
 
-Automatic coastal inference downloads smaller per-country reference polygons
+Country-map verification downloads smaller per-country reference polygons
 from [geoBoundaries gbOpen](https://www.geoboundaries.org/api.html), produced by
 William & Mary geoLab and contributing boundary providers, pinned to commit
 `9469f09592ced973a3448cf66b6100b741b64c0d`. The collection is CC BY 4.0 compliant;

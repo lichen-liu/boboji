@@ -70,9 +70,9 @@ This condition follows from a displacement bound and the triangle inequality;
 it does not require straight travel, constant speed, a particular acceleration,
 or a known transport mode. Distances use a spherical haversine approximation.
 
-Defaults are **1,500 km/h**, **1,000 m allowance per position**, and a **30-minute
-maximum gap**. The speed is a deliberately broad policy for ordinary mixed
-travel including commercial flights, not a universal human or vehicle limit.
+Current defaults, updated at the user's request, are **1,000 km/h**, **10 km
+allowance per position**, and a **one-hour maximum gap**. These are configurable
+travel-policy assumptions, not universal human or vehicle limits.
 The allowance is a conservative screening margin, not a measured or learned
 accuracy radius. The gap limits how much continuity we assume. These values
 are explicit arguments, not thresholds fitted to the user's countries.

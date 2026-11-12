@@ -402,7 +402,7 @@ def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None
 
 
 def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
-                    max_speed_kmh=1500, max_gap_minutes=30, motion_slack_meters=1000,
+                    max_speed_kmh=1000, max_gap_minutes=60, motion_slack_meters=10000,
                     coastal=True, coastal_reference=None):
     """Conservative screening of timed tracking observations.
 
@@ -597,12 +597,12 @@ def main(argv=None):
                         help="resolve coastal visit gaps using reference country geometry (default: enabled)")
     parser.add_argument("--gps-radius-meters", type=float,
                         help="override the automatic coastal mapping band with an explicit tolerance")
-    parser.add_argument("--max-speed-kmh", type=float, default=1500,
-                        help="conservative travel-speed bound for isolated outliers (default: 1500)")
-    parser.add_argument("--max-gap-minutes", type=float, default=30,
-                        help="do not test movement across longer recording gaps (default: 30)")
-    parser.add_argument("--motion-slack-meters", type=float, default=1000,
-                        help="safety allowance per recorded position, not estimated accuracy (default: 1000)")
+    parser.add_argument("--max-speed-kmh", type=float, default=1000,
+                        help="conservative travel-speed bound for isolated outliers (default: 1000)")
+    parser.add_argument("--max-gap-minutes", type=float, default=60,
+                        help="do not test movement across longer recording gaps (default: 60)")
+    parser.add_argument("--motion-slack-meters", type=float, default=10000,
+                        help="safety allowance per recorded position, not estimated accuracy (default: 10000)")
     parser.add_argument("--explain", action="store_true", help="print reasons for every excluded or inferred record")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)

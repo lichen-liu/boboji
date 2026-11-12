@@ -57,9 +57,15 @@ The GPS border filter considers a short switch A → B → A within a track
 segment/route, including an unassigned B. By default, the samples in A
 surrounding the switch must be at most **10 minutes** apart, and B must contain
 at most **5 distinct timestamps**. Every B point must be within the estimated
-GPS radius of A's **polygon**, rather than its centroid. A majority of
-interpolated positions between the surrounding A samples must also support A;
-coherent crossings supported by that bridge remain visible.
+GPS radius of A's **polygon**, rather than its centroid. For switches into a
+named country B, a majority of interpolated positions between the surrounding
+A samples must also support A; coherent crossings supported by that bridge
+remain visible. For an unassigned coastal gap, the bridge may itself be
+unassigned if both it and every actual point stay within A's distance budget.
+A bridge that crosses another named country prevents the coastal correction.
+After a correction, neighboring unassigned gaps are checked again before
+grouping. These later passes only assign unassigned points; they do not change
+known country labels, and inferred points do not train the new radius fit.
 
 The new short/sparse rule's automatic radius uses the same robust upper fence,
 fitted to time-weighted interpolation residuals in stable A observations on
@@ -85,6 +91,9 @@ An isolated marker can also be reassigned, rather than discarded, when a
 supported path brackets its timestamp in the same country and the polygon
 distance passes this threshold. Other supported paths must agree; a path
 supporting the marker's original country vetoes the correction.
+Duplicate points in a short GPX segment do not veto a correction merely because
+that segment lacks enough context to fit its own radius. Nearby observations
+of a different country in another source still veto it.
 
 Sustained offshore travel, long gaps, and untimed observations remain visible
 without sufficient evidence for a change. A real brief visit near a border can

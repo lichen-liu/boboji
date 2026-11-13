@@ -92,7 +92,7 @@ def coast(neighbor=False):
 @pytest.mark.parametrize("seed", [11, 97])
 def test_normal_movement_is_preserved(mode, latitude, cadence, error, seed):
     route = movement(mode, latitude, cadence, error, seed)
-    fixes, report = script.denoise_samples(route, lambda *_: None)
+    fixes, report = script.denoise_samples(route, lambda *_: None, remove_unassigned=False)
     assert report["excluded"] == report["inferred"] == 0
     assert sum(f.count for f in fixes) == len(route)
 
@@ -105,7 +105,7 @@ def test_gross_isolated_errors_are_detected_without_erasing_real_movement(mode, 
     lat, lon, time, seq = route[40]
     bad_lat, bad_lon = forward(lat, lon, 180, 1_000_000)
     route[40] = (bad_lat, bad_lon, time, seq)
-    fixes, report = script.denoise_samples(route, lambda *_: None)
+    fixes, report = script.denoise_samples(route, lambda *_: None, remove_unassigned=False)
     assert report["excluded"] == 1
     assert [(f.latitude, f.longitude, f.time) for f in fixes] == [p[:3] for i, p in enumerate(route) if i != 40]
 
@@ -113,7 +113,7 @@ def test_gross_isolated_errors_are_detected_without_erasing_real_movement(mode, 
 def test_clean_car_pickup_and_return_is_not_a_spike():
     route = samples([(2, 1 + i * .00001) for i in range(51)], seconds=300)
     route[25] = (2, 1.05, route[25][2], 1)  # About 5.5 km in five minutes each way.
-    fixes, report = script.denoise_samples(route, lambda *_: A)
+    fixes, report = script.denoise_samples(route, lambda *_: A, remove_unassigned=False)
     assert len(fixes) == 51 and report["excluded"] == 0
 
 
@@ -122,7 +122,7 @@ def test_clean_winding_road_and_genuine_brief_border_visit_are_preserved(radius)
     coords = [(.1 + .003 * (i % 2), x) for i, x in enumerate([-.01, -.002, -.009, -.001, -.008, -.002])]
     coords += [(.101, .003), (.1015, .004), (.102, .003)]
     coords += [(.1 + .003 * (i % 2), x) for i, x in enumerate([-.002, -.008, -.001, -.009, -.002, -.01, -.003])]
-    fixes, report = script.denoise_samples(samples(coords), coast(True), gps_radius_meters=radius)
+    fixes, report = script.denoise_samples(samples(coords), coast(True), gps_radius_meters=radius, remove_unassigned=False)
     assert report["excluded"] == report["inferred"] == 0
     assert sum(f.country == B for f in fixes) == 3
     assert [p[0] for p in script.group_timeline_labels((f.country, f.time, f.count) for f in fixes)[0]] == [A, B, A]
@@ -137,7 +137,7 @@ def test_changes_of_transport_mode_are_normal():
             speed = new_speed
             time += timedelta(minutes=1)
             route.append((lat, lon, time, 1))
-    fixes, report = script.denoise_samples(route, lambda *_: None)
+    fixes, report = script.denoise_samples(route, lambda *_: None, remove_unassigned=False)
     assert len(fixes) == len(route) and report["excluded"] == 0
 
 
@@ -153,7 +153,7 @@ def test_duplicate_records_do_not_supply_independent_evidence_or_change_decision
         for separate_segments in [False, True]:
             repeated = [(lat, lon, time, seq + j if separate_segments else seq)
                         for j in range(copies) for lat, lon, time, seq in route]
-            fixes, report = script.denoise_samples(repeated, lambda *_: None)
+            fixes, report = script.denoise_samples(repeated, lambda *_: None, remove_unassigned=False)
             assert report["excluded"] == copies
             assert sum(f.count for f in fixes) + report["excluded"] == len(repeated)
             assert len(fixes) == 12
@@ -164,7 +164,7 @@ def test_other_days_and_input_order_do_not_train_a_different_answer():
     other = [(lat, lon, time + timedelta(days=1), 40) for lat, lon, time, _ in samples([(0, 0)] * 31)]
     inputs = [route, route + other, list(reversed(route + other))]
     for records in inputs:
-        fixes, report = script.denoise_samples(records, lambda *_: None)
+        fixes, report = script.denoise_samples(records, lambda *_: None, remove_unassigned=False)
         assert report["excluded"] == 1
         assert all(f.time != route[6][2] for f in fixes if f.time < BASE + timedelta(days=1))
 
@@ -172,7 +172,7 @@ def test_other_days_and_input_order_do_not_train_a_different_answer():
 def test_impossible_isolated_conflict_uses_motion_evidence_without_duplicate_voting():
     route = samples([(0, i * .001) for i in range(13)])
     other = (30, 30, route[6][2], 2)
-    fixes, report = script.denoise_samples(route + [other] * 100, lambda *_: None)
+    fixes, report = script.denoise_samples(route + [other] * 100, lambda *_: None, remove_unassigned=False)
     assert report["conflicting_epochs"] == 1 and report["excluded"] == 100
     assert sum(f.count for f in fixes) == 13
 
@@ -181,14 +181,14 @@ def test_distinct_overlapping_recordings_are_not_resolved_by_density():
     route = spike_route()
     other = [(lat, lon, time + timedelta(seconds=10), 2)
              for lat, lon, time, _ in samples([(30, 30)] * 13)]
-    fixes, report = script.denoise_samples(route + other, lambda *_: None)
+    fixes, report = script.denoise_samples(route + other, lambda *_: None, remove_unassigned=False)
     assert len(fixes) == 26 and report["excluded"] == 0
 
 
 def test_waypoint_duplicate_of_a_rejected_track_fix_is_still_a_poi():
     route = spike_route()
     lat, lon, time, _ = route[6]
-    fixes, report = script.denoise_samples(route + [(lat, lon, time, None)], lambda *_: None)
+    fixes, report = script.denoise_samples(route + [(lat, lon, time, None)], lambda *_: None, remove_unassigned=False)
     assert report["excluded"] == 1
     assert any(f.time == time and f.sequences == {None} for f in fixes)
 
@@ -210,25 +210,25 @@ def test_insufficient_context_abstains(sparse):
         route = [(lat, lon, time, None) for lat, lon, time, _ in route]
     elif sparse == "burst":
         route[7] = (30, 30, route[7][2], 1)
-    fixes, report = script.denoise_samples(route, lambda *_: None)
+    fixes, report = script.denoise_samples(route, lambda *_: None, remove_unassigned=False)
     assert report["excluded"] == 0 and sum(f.count for f in fixes) == len(route)
 
 
 def test_infeasible_bypass_prevents_an_isolated_deletion():
     route = samples([(0, 0), (0, 0), (40, 40), (0, 1), (0, 1)])
-    fixes, report = script.denoise_samples(route, lambda *_: None)
+    fixes, report = script.denoise_samples(route, lambda *_: None, remove_unassigned=False)
     assert len(fixes) == 5 and report["excluded"] == 0
 
 
 def test_user_movement_bounds_and_gap_limits_control_the_decision():
     route = samples([(0, 0), (0, 0), (0, .1), (0, 0), (0, 0)])
-    assert script.denoise_samples(route, lambda *_: None)[1]["excluded"] == 0  # Plausible flight.
+    assert script.denoise_samples(route, lambda *_: None, remove_unassigned=False)[1]["excluded"] == 0  # Plausible flight.
     assert script.denoise_samples(route, lambda *_: None, max_speed_kmh=130,
-                                  motion_slack_meters=1000)[1]["excluded"] == 1
+                                  motion_slack_meters=1000, remove_unassigned=False)[1]["excluded"] == 1
     assert script.denoise_samples(route, lambda *_: None, max_speed_kmh=130,
-                                  motion_slack_meters=6000)[1]["excluded"] == 0
+                                  motion_slack_meters=6000, remove_unassigned=False)[1]["excluded"] == 0
     assert script.denoise_samples(route, lambda *_: None, max_speed_kmh=130,
-                                  max_gap_minutes=.5)[1]["excluded"] == 0
+                                  max_gap_minutes=.5, remove_unassigned=False)[1]["excluded"] == 0
 
 
 @pytest.mark.parametrize("seconds", [1, 60, 300])
@@ -244,7 +244,7 @@ def test_reachability_bound_includes_uncertainty_at_both_positions(seconds):
 def test_different_positions_are_not_a_country_conflict_when_they_agree_on_country():
     route = samples([(.1, -.001), (.1, .002), (.1, -.001)])
     route.append((.1, -.002, route[1][2], 2))
-    fixes, report = script.denoise_samples(route, coast(), gps_radius_meters=500)
+    fixes, report = script.denoise_samples(route, coast(), gps_radius_meters=500, remove_unassigned=False)
     assert report["inferred"] == 1 and report["conflicting_epochs"] == 1
     assert report["excluded"] == 0 and all(f.country == A for f in fixes)
 
@@ -252,7 +252,7 @@ def test_different_positions_are_not_a_country_conflict_when_they_agree_on_count
 def test_slow_or_persistent_error_is_not_identifiable_from_movement_alone():
     # These data could equally be a boat, a coastal hotel with bias, or map error.
     route = samples([(.2, -.001), (.2, .002), (.2, .003), (.2, .002), (.2, -.001)])
-    fixes, report = script.denoise_samples(route, coast())
+    fixes, report = script.denoise_samples(route, coast(), remove_unassigned=False)
     assert [f.country for f in fixes] == [A, None, None, None, A]
     assert report["excluded"] == report["inferred"] == 0
 
@@ -262,7 +262,7 @@ def test_explicit_coastal_tolerance_uses_actual_points_not_duration_or_segment_c
     # Days and GPX segment boundaries cannot change distance to a map polygon.
     route = [(lat, lon, time, i) for i, (lat, lon, time, _) in enumerate(
         samples([(.1, -.001), (.1, .002), (.2, .003), (.3, .002), (.4, -.001)], seconds))]
-    fixes, report = script.denoise_samples(route, coast(), gps_radius_meters=500)
+    fixes, report = script.denoise_samples(route, coast(), gps_radius_meters=500, remove_unassigned=False)
     assert report["excluded"] == 0 and report["inferred"] == 3
     assert all(f.country == A for f in fixes)
     assert sum(f.raw_country is None for f in fixes) == 3
@@ -272,7 +272,7 @@ def test_explicit_coastal_tolerance_uses_actual_points_not_duration_or_segment_c
 
 def test_coastal_tolerance_has_an_actual_distance_cutoff():
     route = samples([(.1, -.001), (.1, .002), (.1, .02), (.1, .002), (.1, -.001)])
-    fixes, report = script.denoise_samples(route, coast(), gps_radius_meters=500)
+    fixes, report = script.denoise_samples(route, coast(), gps_radius_meters=500, remove_unassigned=False)
     assert report["inferred"] == 2
     assert [f.country for f in fixes] == [A, A, None, A, A]
 
@@ -280,7 +280,7 @@ def test_coastal_tolerance_has_an_actual_distance_cutoff():
 def test_nearby_foreign_polygon_prevents_a_unique_coastal_assignment():
     data = {"type": "FeatureCollection", "features": [feature(*A, -1, -1, 0, 1), feature(*B, .005, -1, 1, 1)]}
     route = samples([(.1, -.001), (.1, .002), (.1, -.001)])
-    fixes, report = script.denoise_samples(route, script.country_lookup(data), gps_radius_meters=500)
+    fixes, report = script.denoise_samples(route, script.country_lookup(data), gps_radius_meters=500, remove_unassigned=False)
     assert report["inferred"] == 0 and fixes[1].country is None
 
 
@@ -298,7 +298,7 @@ def test_coastal_inference_requires_unambiguous_raw_tracking_references(context)
     else:
         route = [(lat, lon, time, None) if i != 1 else (lat, lon, time, seq)
                  for i, (lat, lon, time, seq) in enumerate(route)]
-    fixes, report = script.denoise_samples(route, lookup, gps_radius_meters=500)
+    fixes, report = script.denoise_samples(route, lookup, gps_radius_meters=500, remove_unassigned=False)
     assert report["inferred"] == 0 and fixes[1].country is None
 
 
@@ -345,18 +345,18 @@ def test_polygon_distance_is_to_edges_in_metres_including_at_high_latitudes(lati
 
 def test_raw_opt_out_preserves_every_sample_and_equal_time_order():
     route = [(0, -.001, BASE, 1), (0, .001, BASE, 1), (0, -.001, BASE, 2)]
-    fixes, report = script.denoise_samples(route, coast(True), enabled=False, gps_radius_meters=500)
+    fixes, report = script.denoise_samples(route, coast(True), enabled=False, gps_radius_meters=500, remove_unassigned=False)
     assert [f.country for f in fixes] == [A, B, A]
     assert [f.count for f in fixes] == [1, 1, 1]
     assert report == {"enabled": False}
 
 
 def test_explanations_separate_exclusions_from_explicit_mapping_inference():
-    fixes, report = script.denoise_samples(spike_route(), lambda *_: None)
+    fixes, report = script.denoise_samples(spike_route(), lambda *_: None, remove_unassigned=False)
     text = script.format_decisions(report)
     assert "Excluded" in text and "both legs exceed" in text and "2026-01-01T00:06:00Z" in text
     assert "latitude" not in text and "longitude" not in text
-    fixes, report = script.denoise_samples(samples([(.1, -.001), (.1, .002), (.1, -.001)]), coast(), gps_radius_meters=500)
+    fixes, report = script.denoise_samples(samples([(.1, -.001), (.1, .002), (.1, -.001)]), coast(), gps_radius_meters=500, remove_unassigned=False)
     text = script.format_decisions(report)
     assert "explicit coastal tolerance" in text and "Unassigned" in text and "Alpha" in text
     assert "not measured GPS accuracy" in script.format_denoising(report)

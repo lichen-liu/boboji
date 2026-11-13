@@ -4,6 +4,7 @@
 import argparse
 from dataclasses import dataclass, field
 import json
+import logging
 import math
 import shutil
 import sys
@@ -28,11 +29,12 @@ REFERENCE_URL = (
     + "/releaseData/gbOpen/{iso3}/ADM0/geoBoundaries-{iso3}-ADM0_simplified.geojson"
 )
 MAX_AUTO_COAST_METERS = 10_000
+LOGGER = logging.getLogger("gpx_countries")
 
 
 def load_countries(path, download=False, url=DATA_URL):
     if not path.exists() and download:
-        print("Downloading public country boundaries; GPX coordinates stay local.", file=sys.stderr)
+        LOGGER.info("Downloading boundary map: %s", path.name)
         path.parent.mkdir(parents=True, exist_ok=True)
         request = Request(url, headers={"User-Agent": "boboji-gpx-countries/1.0"})
         temporary = None
@@ -182,8 +184,8 @@ def load_coastal_reference(country, iso3, cache_dir=None):
         for feature in data["features"]:
             feature["properties"] = {"NAME_EN": country[0], "ISO_A2": country[1]}
         return country_lookup(data)
-    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
-        print(f"Detailed coastline unavailable for {country[0]}; unsupported gaps remain unassigned.", file=sys.stderr)
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
+        LOGGER.info("Reference map unavailable for %s: %s", country[0], error)
         return None
 
 
@@ -327,6 +329,24 @@ class DenoisePolicy:
 
 
 DEFAULT_POLICY = DenoisePolicy()
+
+
+@dataclass(frozen=True)
+class DenoiseConfig:
+    policy: DenoisePolicy = DEFAULT_POLICY
+    gps_radius_meters: Optional[float] = None
+    enabled: bool = True
+    motion: bool = True
+    borders: bool = True
+    visits: bool = True
+    coastal: bool = True
+    remove_unassigned: bool = True
+    singletons: bool = True
+
+    def __post_init__(self):
+        radius = self.gps_radius_meters
+        if self.enabled and radius is not None and (not math.isfinite(radius) or radius <= 0):
+            raise ValueError("invalid coastal radius")
 
 
 def tracking_epochs(fixes):
@@ -592,137 +612,235 @@ def remove_singleton_excursions(fixes, report):
     return [fix for fix in fixes if fix not in removed]
 
 
+def create_denoise_report(fixes, epochs, config, reference):
+    policy = config.policy
+    return {
+        "enabled": True, "input": sum(f.count for f in fixes), "unique": len(fixes),
+        "excluded": 0, "tested": 0, "motion_enabled": config.motion,
+        "conflicting_epochs": sum(len(epoch) > 1 for epoch in epochs.values()),
+        "border_corrected": 0, "borders_enabled": config.borders,
+        "reference_confirmed": 0, "map_unavailable": set(),
+        "coastal_enabled": config.coastal,
+        "coastal_automatic": config.gps_radius_meters is None and reference is not None,
+        "coastal_models": [], "coastal_unavailable": [], "coastal_effective": [],
+        "inferred": 0, "max_inferred_distance_meters": 0,
+        "visit_inferred": 0, "visits_enabled": config.visits,
+        "unassigned_removed": 0, "remove_unassigned_enabled": config.remove_unassigned,
+        "singleton_removed": 0, "singleton_excursions": 0, "singleton_enabled": config.singletons,
+        "gps_radius_meters": config.gps_radius_meters,
+        "max_speed_kmh": policy.max_speed_kmh, "max_gap_minutes": policy.max_gap_minutes,
+        "motion_slack_meters": policy.position_allowance_meters, "decisions": [],
+    }
+
+
+def screen_motion(fixes, epochs, policy, report):
+    rejected, checked = motion_outliers(epochs, policy)
+    report["excluded"] = sum(f.count for f in rejected)
+    report["tested"] = len(checked)
+    report["decisions"].extend(
+        (f.time, f.raw_country[0] if f.raw_country else "Unassigned", "Excluded",
+         "both legs exceed configured movement bound", f.count) for f in rejected)
+    return [fix for fix in fixes if fix not in rejected]
+
+
+def refine_map_labels(fixes, lookup, config, reference, report):
+    if config.borders or config.coastal:
+        adjudicate_maps(fixes, lookup, reference, report, config.borders, config.coastal)
+    # Geometry offsets describe map disagreement; they never train a tolerance.
+    covered = defaultdict(list)
+    for fix in fixes:
+        if fix.raw_country is None and fix.reference_country is not None:
+            covered[fix.reference_country].append(fix)
+    for country, points in covered.items():
+        offsets = [lookup.distance_to(f.latitude, f.longitude, country, MAX_AUTO_COAST_METERS / 1000) * 1000
+                   for f in points]
+        locations = len({(fix.latitude, fix.longitude) for fix in points})
+        report["coastal_models"].append((country[0], locations, math.ceil(max(offsets))))
+        report["coastal_effective"].append(
+            (country[0], min(MAX_AUTO_COAST_METERS, config.policy.position_allowance_meters)))
+
+
+def infer_country_labels(fixes, lookup, config, reference, report):
+    """Both context passes read the same frozen map-backed evidence."""
+    evidence = {fix: fix.country for fix in fixes}
+    if config.visits:
+        infer_single_epoch_visits(fixes, lookup, evidence, config.policy, report,
+                                 config.gps_radius_meters, include_unassigned=config.coastal)
+    if config.coastal:
+        infer_coastal_countries(fixes, lookup, config.gps_radius_meters, report, reference,
+                               config.policy.position_allowance_meters, evidence=evidence)
+
+
+def diagnose_tracking(fixes, policy):
+    epochs = tracking_epochs(fixes)
+    conflicts = sum(len({fix.country for fix in epoch}) > 1 for epoch in epochs.values())
+    movement = []
+    times = list(epochs)
+    for left, right in zip(times, times[1:]):
+        if policy.gap_ok(left, right) and not any(
+            policy.feasible(a, b) for a in epochs[left] for b in epochs[right]
+        ):
+            movement.append((left, right))
+    return conflicts, movement
+
+
+def country_conflicts(fixes):
+    labels = defaultdict(set)
+    for fix in fixes:
+        if fix.time is not None:
+            labels[fix.time].add(fix.country)
+    return [(time, sorted(countries, key=lambda country: (country is None, country or ("", ""))))
+            for time, countries in sorted(labels.items()) if len(countries) > 1]
+
+
+def filter_analysis(fixes, config, report):
+    """Apply output policies once, after inference and its diagnostics."""
+    if config.remove_unassigned:
+        fixes = remove_unassigned_fixes(fixes, report)
+    if config.singletons:
+        fixes = remove_singleton_excursions(fixes, report)
+    report["represented"] = sum(fix.count for fix in fixes)
+    report["remaining_country_alternatives"] = country_conflicts(fixes)
+    report["remaining_country_epochs"] = len(report["remaining_country_alternatives"])
+    _, report["remaining_motion"] = diagnose_tracking(fixes, config.policy)
+    return fixes
+
+
+def run_denoising(samples, lookup, config, reference=None):
+    """Prepare → Screen → Map → Context → Diagnose → Output."""
+    if not config.enabled:
+        fixes = []
+        for lat, lon, time, sequence in samples:
+            country = lookup(lat, lon)
+            fixes.append(Fix(lat, lon, time, country, 1, {sequence}, country))
+        return fixes, {"enabled": False}
+
+    fixes = normalize_samples(samples, lookup)
+    epochs = tracking_epochs(fixes)
+    report = create_denoise_report(fixes, epochs, config, reference)
+    if config.motion:
+        fixes = screen_motion(fixes, epochs, config.policy, report)
+    refine_map_labels(fixes, lookup, config, reference, report)
+    infer_country_labels(fixes, lookup, config, reference, report)
+    report["unresolved_country_epochs"], report["unresolved_motion"] = diagnose_tracking(fixes, config.policy)
+    report["before_output_country_epochs"] = len(country_conflicts(fixes))
+    fixes = filter_analysis(fixes, config, report)
+    report["decisions"].sort(key=decision_sort_key)
+    report["map_unavailable"] = sorted(report["map_unavailable"])
+    return fixes, report
+
+
 def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                     max_speed_kmh=DEFAULT_POLICY.max_speed_kmh,
                     max_gap_minutes=DEFAULT_POLICY.max_gap_minutes,
                     motion_slack_meters=DEFAULT_POLICY.position_allowance_meters,
                     coastal=True, coastal_reference=None, borders=True, visits=True,
                     remove_unassigned=True, motion=True, singletons=True):
-    """Normalize → motion → map evidence → visit/coast context → output policy.
-
-    Every stage uses immutable observation evidence. Only geometry-backed map
-    corrections can become evidence for country context; inferred visits and
-    coastal labels never become anchors or calibration observations.
-    enabled=False bypasses every stage, regardless of individual stage switches.
-    """
-    if not enabled:
-        fixes = [Fix(lat, lon, time, lookup(lat, lon), 1, {sequence}, lookup(lat, lon))
-                 for lat, lon, time, sequence in samples]
-        return fixes, {"enabled": False}
-    policy = DenoisePolicy(max_speed_kmh, max_gap_minutes, motion_slack_meters)
-    if gps_radius_meters is not None and (not math.isfinite(gps_radius_meters) or gps_radius_meters <= 0):
-        raise ValueError("invalid coastal radius")
-    fixes = normalize_samples(samples, lookup)
-    epochs = tracking_epochs(fixes)
-    rejected, checked = motion_outliers(epochs, policy) if motion else (set(), set())
-    decisions = [(f.time, f.raw_country[0] if f.raw_country else "Unassigned", "Excluded",
-                  "both legs exceed configured movement bound", f.count) for f in rejected]
-    report = {"enabled": True, "input": sum(f.count for f in fixes), "unique": len(fixes),
-              "excluded": sum(f.count for f in rejected), "tested": len(checked), "motion_enabled": motion,
-              "conflicting_epochs": sum(len(epoch) > 1 for epoch in epochs.values()), "inferred": 0,
-              "coastal_enabled": coastal, "coastal_automatic": gps_radius_meters is None and coastal_reference is not None,
-              "coastal_models": [], "coastal_unavailable": [], "reference_confirmed": 0,
-              "coastal_effective": [], "border_corrected": 0, "borders_enabled": borders,
-              "visit_inferred": 0, "visits_enabled": visits,
-              "unassigned_removed": 0, "remove_unassigned_enabled": remove_unassigned,
-              "singleton_removed": 0, "singleton_excursions": 0, "singleton_enabled": singletons,
-              "map_unavailable": set(),
-              "max_inferred_distance_meters": 0, "gps_radius_meters": gps_radius_meters,
-              "max_speed_kmh": max_speed_kmh, "max_gap_minutes": max_gap_minutes,
-              "motion_slack_meters": motion_slack_meters, "decisions": decisions}
-    retained = [f for f in fixes if f not in rejected]
-    if borders or coastal:
-        adjudicate_maps(retained, lookup, coastal_reference, report, borders, coastal)
-    # Observed geometry offsets are diagnostic only. They never supply a
-    # tolerance or depend on a context guess.
-    covered = defaultdict(list)
-    for fix in retained:
-        if fix.raw_country is None and fix.reference_country is not None:
-            covered[fix.reference_country].append(fix)
-    for country, points in covered.items():
-        offsets = [lookup.distance_to(f.latitude, f.longitude, country, MAX_AUTO_COAST_METERS / 1000) * 1000 for f in points]
-        report["coastal_models"].append((country[0], len({(f.latitude, f.longitude) for f in points}), math.ceil(max(offsets))))
-        report["coastal_effective"].append((country[0], min(MAX_AUTO_COAST_METERS, motion_slack_meters)))
-    evidence = {f: f.country for f in retained}
-    if visits:
-        infer_single_epoch_visits(retained, lookup, evidence, policy, report, gps_radius_meters,
-                                 include_unassigned=coastal)
-    if coastal:
-        infer_coastal_countries(retained, lookup, gps_radius_meters, report, coastal_reference,
-                               motion_slack_meters, evidence=evidence)
-    final_epochs = tracking_epochs(retained)
-    report["unresolved_country_epochs"] = sum(len({f.country for f in epoch}) > 1 for epoch in final_epochs.values())
-    report["unresolved_motion"] = []
-    times = list(final_epochs)
-    for left, right in zip(times, times[1:]):
-        if policy.gap_ok(left, right) and not any(policy.feasible(a, b) for a in final_epochs[left] for b in final_epochs[right]):
-            report["unresolved_motion"].append((left, right))
-    # Diagnose before output filtering. Inference never runs after removals.
-    if remove_unassigned:
-        retained = remove_unassigned_fixes(retained, report)
-    # Freeze the view selected by the unassigned policy, then filter once.
-    if singletons:
-        retained = remove_singleton_excursions(retained, report)
-    report["decisions"].sort(key=decision_sort_key)
-    report["map_unavailable"] = sorted(report["map_unavailable"])
-    return retained, report
+    """Keyword adapter for callers; the CLI uses DenoiseConfig directly."""
+    policy = DenoisePolicy(max_speed_kmh, max_gap_minutes, motion_slack_meters) if enabled else DEFAULT_POLICY
+    config = DenoiseConfig(policy=policy, gps_radius_meters=gps_radius_meters, enabled=enabled,
+                           motion=motion, borders=borders, visits=visits, coastal=coastal,
+                           remove_unassigned=remove_unassigned, singletons=singletons)
+    return run_denoising(samples, lookup, config, coastal_reference)
 
 
 def decision_sort_key(row):
     return row[0] is None, row[0] or datetime.max.replace(tzinfo=timezone.utc), row[1], row[2], row[3], row[4]
 
 
-def format_denoising(report):
+def format_denoising(report, verbose=False):
     if not report["enabled"]:
-        return "Denoising: off; original country assignments and all GPX points are shown."
-    tolerance = ("none supplied; geometric country labels retained" if report["gps_radius_meters"] is None
-                 else f"{report['gps_radius_meters']:g} m (explicit mapping assumption, not measured GPS accuracy)")
-    if not report["coastal_enabled"]:
-        tolerance = "off"
-    elif report["coastal_automatic"]:
-        effective = dict(report["coastal_effective"])
-        observed = {name: (locations, radius) for name, locations, radius in report["coastal_models"]}
-        models = "; ".join((f"{name}: {effective[name]:,} m effective; map disagreement {observed[name][1]:,} m "
-                            f"from {observed[name][0]:,} reference-confirmed locations") if name in observed else
-                           f"{name}: {effective[name]:,} m position allowance; no observed map offset"
-                           for name in sorted(effective))
-        tolerance = "automatic from reference country polygons and the position allowance"
-        tolerance += ". " + (models or "No supported mapping band found")
-        if report["coastal_unavailable"]:
-            tolerance += ". Reference unavailable: " + ", ".join(report["coastal_unavailable"])
-    return (f"Denoising: on · Input GPX points: {report['input']:,} · Distinct records: {report['unique']:,}\n"
-            f"Excluded as motion outliers: {report['excluded']:,} GPX points "
-            f"({'enabled' if report['motion_enabled'] else 'disabled'}) · "
-            f"Distinct tracking fixes checked: {report['tested']:,} · "
-            f"Conflicting timestamp groups observed: {report['conflicting_epochs']:,}\n"
-            f"Movement bounds: {report['max_speed_kmh']:g} km/h; "
-            f"{report['motion_slack_meters']:g} m allowance per position; "
-            f"{report['max_gap_minutes']:g} min maximum gap. These are assumptions, not fitted GPS accuracy.\n"
-            f"Coastal tolerance: {tolerance}.\n"
-            f"Country assignments inferred: {report['inferred']:,} · "
-            f"Reference-covered GPX points: {report['reference_confirmed']:,} · "
-            f"Farthest inferred polygon distance: {report['max_inferred_distance_meters']:.1f} m.\n"
-            f"Visit-context inferences: {report['visit_inferred']:,} "
-            f"({'enabled' if report['visits_enabled'] else 'disabled'}).\n"
-            f"Border-map corrections: {report['border_corrected']:,} "
-            f"({'enabled' if report['borders_enabled'] else 'disabled'}).\n"
-            f"Unassigned removal: {'on' if report['remove_unassigned_enabled'] else 'off'} · "
-            f"Removed unassigned GPX points: {report['unassigned_removed']:,}.\n"
-            f"Singleton-excursion removal: {'on' if report['singleton_enabled'] else 'off'} · "
-            f"Removed GPX points: {report['singleton_removed']:,} · Excursions: {report['singleton_excursions']:,}.\n"
-            "Diagnostics below describe evidence before final output filters.\n"
-            f"Unresolved simultaneous country alternatives: {report['unresolved_country_epochs']:,} · "
-            f"Unresolved movement transitions: {len(report['unresolved_motion']):,}.\n"
-            f"Unavailable border references: {', '.join(report['map_unavailable']) or 'none'}.\n"
-            "Singleton removal is a presentation policy, not proof of GPS error. "
-            "Coastal labels are approximate visit context, not proof of land presence.")
+        return "Denoising: off."
+    removed = report["excluded"] + report["unassigned_removed"] + report["singleton_removed"]
+    kept = report.get("represented", report["input"] - removed)
+    excursions = report["singleton_excursions"]
+    excursion_label = "excursion" if excursions == 1 else "excursions"
+    lines = [
+        f"Denoising: on · Input: {report['input']:,} · Kept: {kept:,} · Removed: {removed:,}",
+        f"Removed points: motion {report['excluded']:,} · unassigned {report['unassigned_removed']:,} · "
+        f"singletons {report['singleton_removed']:,} ({excursions:,} {excursion_label})",
+        f"Country labels (per stage): border {report['border_corrected']:,} · reference {report['reference_confirmed']:,} · "
+        f"visit {report['visit_inferred']:,} · coastal {report['inferred']:,}",
+    ]
+    disabled = [name for name, key in (
+        ("motion", "motion_enabled"), ("border", "borders_enabled"),
+        ("visit", "visits_enabled"), ("coastal", "coastal_enabled"),
+        ("unassigned removal", "remove_unassigned_enabled"), ("singletons", "singleton_enabled"),
+    ) if not report[key]]
+    if disabled:
+        lines.append("Disabled: " + ", ".join(disabled) + ".")
+    conflicts = report.get("remaining_country_epochs", 0)
+    movement = len(report.get("remaining_motion", []))
+    if conflicts or movement:
+        issues = [f"{count:,} {name}{'' if count == 1 else 's'}" for count, name in
+                  ((conflicts, "country conflict"), (movement, "movement conflict")) if count]
+        lines.append("Review: " + " · ".join(issues) + ". Use --explain for timestamps.")
+    if verbose:
+        lines.extend(("", format_denoising_details(report)))
+    return "\n".join(lines)
+
+
+def format_denoising_details(report):
+    rows = [
+        ("Prepare", "Normalize", "on", f"{report['unique']:,} distinct records"),
+        ("Screen", "Motion", "on" if report["motion_enabled"] else "off", f"{report['excluded']:,} removed"),
+        ("Map", "Borders", "on" if report["borders_enabled"] else "off", f"{report['border_corrected']:,} corrected"),
+        ("Map", "Reference coverage", "on" if report["coastal_enabled"] else "off", f"{report['reference_confirmed']:,} assigned"),
+        ("Context", "Visits", "on" if report["visits_enabled"] else "off", f"{report['visit_inferred']:,} assigned"),
+        ("Context", "Coastal", "on" if report["coastal_enabled"] else "off", f"{report['inferred']:,} assigned"),
+        ("Output", "Unassigned", "on" if report["remove_unassigned_enabled"] else "off", f"{report['unassigned_removed']:,} removed"),
+        ("Output", "Singletons", "on" if report["singleton_enabled"] else "off", f"{report['singleton_removed']:,} removed, {report['singleton_excursions']:,} excursions"),
+    ]
+    radius = report["gps_radius_meters"]
+    context_radius = report["motion_slack_meters"] if radius is None else radius
+    radius_source = "position allowance" if radius is None else "manual override"
+    lines = [
+        "Denoising stages",
+        text_table(("Phase", "Stage", "State", "Result"), rows),
+        "",
+        f"Bounds: speed {report['max_speed_kmh']:g} km/h · "
+        f"position {report['motion_slack_meters'] / 1000:g} km · gap {report['max_gap_minutes']:g} min.",
+        f"Country context radius: {context_radius:g} m ({radius_source}).",
+        "Bounds are configured assumptions, not measured GPS accuracy.",
+        f"Tracking: {report['tested']:,} checked fixes · {report['conflicting_epochs']:,} timestamps with multiple positions.",
+        f"Diagnostics before output filters: {report.get('before_output_country_epochs', report['unresolved_country_epochs']):,} country conflicts · "
+        f"{len(report['unresolved_motion']):,} movement conflicts.",
+        f"Diagnostics after output filters: {report.get('remaining_country_epochs', 0):,} country conflicts · "
+        f"{len(report.get('remaining_motion', [])):,} movement conflicts.",
+        "Removal and label-change counts include duplicates; label changes can overlap.",
+    ]
+    if report["coastal_enabled"] and report["coastal_automatic"]:
+        lines.append(f"Automatic coastal inference is capped at {MAX_AUTO_COAST_METERS:,} m.")
+    unavailable = sorted(set(report["map_unavailable"]) | set(report["coastal_unavailable"]))
+    if unavailable:
+        lines.append("Unavailable reference maps: " + ", ".join(unavailable) + ".")
+    maps = format_reference_details(report)
+    if maps:
+        lines.extend(("", maps))
+    return "\n".join(lines)
+
+
+def format_reference_details(report):
+    effective = dict(report["coastal_effective"]) if report["coastal_automatic"] else {}
+    observed = {name: (locations, offset) for name, locations, offset in report["coastal_models"]}
+    if not effective and not observed:
+        return ""
+    rows = []
+    for name in sorted(set(effective) | set(observed)):
+        locations, offset = observed.get(name, (None, None))
+        rows.append((name, f"{effective[name]:,}" if name in effective else "—",
+                     f"{offset:,}" if offset is not None else "—",
+                     f"{locations:,}" if locations is not None else "—"))
+    return "Reference map details\n" + text_table(
+        ("Country / territory", "Auto allowance (m)", "Map offset (m)", "Locations"), rows
+    )
 
 
 def format_decisions(report):
     rows = [(timestamp(time), original, result, str(count), reason)
             for time, original, result, reason, count in sorted(report.get("decisions", []), key=decision_sort_key)]
     if not rows:
-        return "No records were excluded or assigned a different country."
+        return "No denoising changes."
     return text_table(("Time (UTC)", "Raw country", "Analysis result", "GPX points", "Reason"), rows)
 
 
@@ -751,9 +869,13 @@ def format_table(countries, total, unassigned):
         name, code = country or ("Unassigned", "—")
         rows.append((name, code, f"{count:,}", timestamp(first), timestamp(last)))
     count = sum(country is not None for country in countries)
-    lines = [text_table(headers, rows), "",
-             f"Countries/territories: {count} · GPX points: {total:,} · Unassigned: {unassigned:,}",
-             "First/last are recorded timestamps, not continuous stays. — = no recorded timestamp."]
+    summary = f"Countries/territories: {count} · GPX points: {total:,}"
+    if unassigned:
+        summary += f" · Unassigned: {unassigned:,}"
+    lines = [text_table(headers, rows), "", summary,
+             "First/last are recorded samples; gaps do not establish continuous stays."]
+    if any(first is None for _count, first, _last in countries.values()):
+        lines.append("— = no recorded timestamp.")
     return "\n".join(lines)
 
 
@@ -796,15 +918,18 @@ def format_timeline(periods, total, unassigned, untimed):
         rows.append((name, code, f"{count:,}", timestamp(begin), timestamp(end), span))
     countries = {country for country, _, _, _ in periods if country is not None}
     timed_periods = sum(begin is not None for _, _, begin, _ in periods)
-    lines = [text_table(headers, rows), "",
-             f"Countries/territories: {len(countries)} · Recorded periods: {timed_periods:,}",
-             f"GPX points represented: {total:,} · Unassigned: {unassigned:,} · Untimed: {untimed:,}",
-             "Rows group consecutive countries after sorting UTC timestamps; returns start new rows.",
-             "Recorded span = end minus begin, based on samples; continuous presence is not implied."]
-    if any(begin is None for _, _, begin, _ in periods):
-        lines.append("Untimed points are grouped by country at the end; — = no recorded timestamp.")
+    summary = (f"Countries/territories: {len(countries)} · Recorded periods: {timed_periods:,} · "
+               f"GPX points represented: {total:,}")
+    if unassigned:
+        summary += f" · Unassigned: {unassigned:,}"
+    if untimed:
+        summary += f" · Untimed: {untimed:,}"
+    lines = [text_table(headers, rows), "", summary,
+             "Recorded spans include gaps; they do not establish continuous stays."]
+    if untimed:
+        lines.append("Untimed points follow the timeline; — = no recorded timestamp.")
     if any(a[3] is not None and a[3] == b[2] and a[0] != b[0] for a, b in zip(periods, periods[1:])):
-        lines.append("Different countries at the same timestamp are unresolved alternatives; their row order does not establish travel.")
+        lines.append("Countries sharing a timestamp are alternatives; row order does not establish travel.")
     return "\n".join(lines)
 
 
@@ -843,13 +968,22 @@ def main(argv=None):
     denoising.add_argument("--position-allowance-meters", "--motion-slack-meters", dest="motion_slack_meters",
                           type=float, default=DEFAULT_POLICY.position_allowance_meters,
                           help=f"position allowance for motion and country context (default: {DEFAULT_POLICY.position_allowance_meters})")
-    denoising.add_argument("--explain", action="store_true", help="print reasons for every excluded or inferred record")
+    denoising.add_argument("--explain", action="store_true", help="show record changes and remaining country/movement conflicts")
+    denoising.add_argument("--verbose", action="store_true", help="show phase results, settings, and map diagnostics")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
     for flag, value in (("--gps-radius-meters", args.gps_radius_meters), ("--max-speed-kmh", args.max_speed_kmh),
                         ("--max-gap-minutes", args.max_gap_minutes), ("--position-allowance-meters", args.motion_slack_meters)):
         if value is not None and (not math.isfinite(value) or value < 0 or (value == 0 and flag != "--position-allowance-meters")):
             parser.error(f"{flag} must be finite and {'nonnegative' if flag == '--position-allowance-meters' else 'positive'}")
+    config = DenoiseConfig(
+        policy=DenoisePolicy(args.max_speed_kmh, args.max_gap_minutes, args.motion_slack_meters),
+        gps_radius_meters=args.gps_radius_meters, enabled=args.denoise,
+        motion=args.motion_denoise, borders=args.border_denoise, visits=args.visit_denoise,
+        coastal=args.coastal_denoise, remove_unassigned=args.remove_unassigned,
+        singletons=args.singleton_denoise)
+    previous_log_level = LOGGER.level
+    LOGGER.setLevel(logging.INFO if args.verbose else logging.WARNING)
     try:
         with args.gpx.open("rb") as source:
             points = gpx_samples(source, motion_groups=True)
@@ -861,30 +995,33 @@ def main(argv=None):
             ))
             reference = (None if args.country_data is not None else lru_cache(maxsize=8)(
                 lambda country: load_coastal_reference(country, lookup.iso3.get(country))))
-            fixes, report = denoise_samples(chain((first,), points), lookup, enabled=args.denoise,
-                                           gps_radius_meters=args.gps_radius_meters, max_speed_kmh=args.max_speed_kmh,
-                                           max_gap_minutes=args.max_gap_minutes, motion_slack_meters=args.motion_slack_meters,
-                                           coastal=args.coastal_denoise, coastal_reference=reference,
-                                           borders=args.border_denoise, visits=args.visit_denoise,
-                                           remove_unassigned=args.remove_unassigned, motion=args.motion_denoise,
-                                           singletons=args.singleton_denoise)
+            fixes, report = run_denoising(chain((first,), points), lookup, config, reference)
             labels = ((fix.country, fix.time, fix.count) for fix in fixes)
             output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
                       else format_table(*summarize_labels(labels)))
-            output += "\n" + format_denoising(report)
+            output += "\n\n" + format_denoising(report, verbose=args.verbose)
             if args.explain:
                 output += "\n\n" + format_decisions(report)
-                if report.get("unresolved_motion"):
-                    output += "\n\nUnresolved movement transitions (the wrong endpoint cannot be identified):\n"
+                if report.get("remaining_country_alternatives"):
+                    output += "\n\nCountry conflicts in displayed points:\n"
+                    output += text_table(("Time (UTC)", "Country alternatives"), [
+                        (timestamp(time), ", ".join(f"{country[0]} ({country[1]})" if country else "Unassigned"
+                                                   for country in countries))
+                        for time, countries in report["remaining_country_alternatives"]])
+                if report.get("remaining_motion"):
+                    output += "\n\nMovement conflicts in displayed points:\n"
                     output += text_table(("From (UTC)", "To (UTC)"),
-                                         [(timestamp(a), timestamp(b)) for a, b in report["unresolved_motion"]])
+                                         [(timestamp(a), timestamp(b)) for a, b in report["remaining_motion"]])
         print(output)
     except (OSError, ValueError, ET.ParseError) as error:
         parser.exit(2, f"error: {error}\n")
     except (KeyError, TypeError, IndexError, AttributeError):
         parser.exit(2, "error: malformed country GeoJSON\n")
+    finally:
+        LOGGER.setLevel(previous_log_level)
     return 0
 
 
 if __name__ == "__main__":
+    logging.basicConfig(format="%(message)s")
     raise SystemExit(main())

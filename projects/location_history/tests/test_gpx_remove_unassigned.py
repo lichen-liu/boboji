@@ -54,7 +54,7 @@ def test_default_removal_handles_timed_untimed_track_poi_and_duplicate_weights()
     assert sum(row[4] for row in removed) == 6
     assert any(row[0] is None for row in removed)
     assert "final unassigned-removal policy" in script.format_decisions(report)
-    assert "Removed unassigned GPX points: 6" in script.format_denoising(report)
+    assert "unassigned 6" in script.format_denoising(report)
     assert_conserved(records, fixes, report)
 
 
@@ -195,4 +195,4 @@ def test_cli_explains_final_removal_with_the_specific_reason(tmp_path, capsys):
     assert script.main([str(source), '--country-data', str(boundaries), '--explain']) == 0
     output = capsys.readouterr().out
     assert 'final unassigned-removal policy' in output
-    assert 'Removed unassigned GPX points: 1' in output
+    assert 'unassigned 1' in output

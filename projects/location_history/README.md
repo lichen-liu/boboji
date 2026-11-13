@@ -1,213 +1,142 @@
 # Location history
 
-Run the commands below from this project directory:
+Standalone Python 3.9+ tools using only the standard library. Run examples from
+this project directory:
 
 ```sh
 cd projects/location_history
 ```
 
-`timeline_to_fog.py` converts Google Maps Timeline JSON into a GPX file for
-Fog of World. It is a standalone Python 3.9+ script using only the standard
-library. Copy it anywhere and run:
+## Convert Timeline JSON
+
+`timeline_to_fog.py` converts Google Maps Timeline exports to GPX for Fog of World.
+It supports Android/iPhone exports and older Google Takeout raw and semantic
+history. Extract ZIPs first; multiple JSON inputs can share one output.
 
 ```sh
 python3 timeline_to_fog.py location-history.json -o history.gpx
 ```
 
-Supports Android/iPhone Timeline exports and older Google Takeout raw and
-semantic history. Extract ZIPs first; multiple JSON files can share one output.
-Open the resulting `.gpx` with Fog of World or use its track-import flow.
+Conversion stays offline and preserves available timestamps and altitude.
+Separate trips/devices stay apart. Gaps over 30 minutes or 10 km start new
+segments; `--max-gap-minutes` and `--max-distance-km` adjust these limits.
+Visits and activity endpoints stay isolated. Use `--force` to replace an existing
+output. Coordinates are treated as WGS-84.
 
-Conversion stays offline, preserves available timestamps and altitude, and
-keeps separate trips/devices apart. Gaps over 30 minutes or 10 km start new
-segments; `--max-gap-minutes` and `--max-distance-km` adjust those limits.
-Visits and activity endpoints stay isolated rather than inventing routes.
-Use `--force` to replace an existing output. Keep personal exports outside Git
-or in ignored `data/` and `output/` folders. Coordinates are treated as WGS-84.
+## Summarize countries
 
-`gpx_countries.py` prints a country/territory table with point counts and full
-first/last recorded timestamps (UTC):
+`gpx_countries.py` shows country/territory counts and recorded timestamps in UTC.
 
 ```sh
-python3 gpx_countries.py history.gpx
 python3 gpx_countries.py history.gpx --summary
 python3 gpx_countries.py history.gpx --timeline
-python3 gpx_countries.py history.gpx --timeline --denoise
+python3 gpx_countries.py history.gpx --timeline --verbose
 python3 gpx_countries.py history.gpx --timeline --explain
-python3 gpx_countries.py history.gpx --timeline --no-coastal-denoise
-python3 gpx_countries.py history.gpx --timeline --no-motion-denoise --no-remove-unassigned
-python3 gpx_countries.py history.gpx --timeline --gps-radius-meters 1000
-python3 gpx_countries.py history.gpx --timeline --no-remove-unassigned
 python3 gpx_countries.py history.gpx --timeline --no-singleton-denoise
 python3 gpx_countries.py history.gpx --timeline --no-denoise
 python3 gpx_countries.py history.gpx > var/visited_countries.md
 ```
 
-The default view and `--summary` show one row per country in alphabetical order.
-`--timeline` sorts observations by UTC timestamp, then groups consecutive
-countries into rows with begin, end, recorded span, and point count. Returns
-start new rows after the filters below have run. An
-`--remove-unassigned` stage is enabled by default: remaining unresolved records
-are removed **before** country grouping. `--no-remove-unassigned` keeps them
-visible and lets them split periods. This is an explicit output policy, not a
-claim that every unmatched point is noise. Untimed retained points are grouped
-by country at the end.
-The default-on `--singleton-denoise` stage then filters one-timestamp excursions
-such as Canada → US → Canada. `--no-singleton-denoise` keeps them visible. A
-multi-timestamp visit, first/last epoch, or ambiguous surrounding context is
-preserved by this stage. These are output policies applied before grouping in
-both views; they do not change the GPX.
-Spans run from the first to last recorded point in each period and can include
-sampling gaps. The timeline flag replaces `--chronological`.
-Equal-time conflicts retain input order; rows do not resolve which position is true.
+The default `--summary` view has one row per country in alphabetical order.
+`--timeline` sorts points by UTC timestamp and groups consecutive countries after
+filtering. Returns start new rows. Retained untimed points appear at the end.
+Recorded spans can include sampling gaps; they do not establish continuous stays.
+Different countries at the same timestamp remain alternatives. The timeline flag
+replaces `--chronological`.
 
-All switches, shared thresholds, and `--explain` are grouped under **Denoising**
-in `--help`. The master `--denoise` switch and every optional stage are enabled
-by default in both views:
+The default footer shows input/kept/removed point counts, removal categories,
+label counts by stage, disabled stages, and any conflicts in the displayed points.
+Label counts can overlap; removal categories are disjoint. `--verbose` adds phase
+results, settings, diagnostics before and after output filtering, and reference-map
+details. Download attempts and optional reference failures are logged to stderr
+only in verbose CLI runs. `--explain` lists individual decisions and timestamps of
+country and movement conflicts remaining in the displayed points. The two flags can be combined.
 
-| Control | Disables |
+## Denoising
+
+Denoising changes the displayed analysis without writing GPX files. The pipeline
+has six ordered phases:
+
+| Phase | Work |
 | --- | --- |
-| `--no-denoise` | The entire pipeline; restores original records and baseline country labels. |
-| `--no-motion-denoise` | Isolated motion-outlier exclusion. |
-| `--no-border-denoise` | Reference-map refinement of named countries. |
-| `--no-visit-denoise` | Single-epoch visit-context inference. |
-| `--no-coastal-denoise` | Reference refinement and contextual inference for raw-unassigned points. |
-| `--no-remove-unassigned` | Final removal of still-unassigned records. |
-| `--no-singleton-denoise` | Final filtering of single-timestamp country excursions. |
+| Prepare | Normalize exact copies while retaining record counts; build chronological tracking epochs. |
+| Screen | Exclude isolated motion outliers using bounded travel and a feasible bypass. |
+| Map | Refine country labels with reference polygons; collect map-disagreement diagnostics. |
+| Context | Infer visit/coastal labels from one frozen snapshot of map-backed evidence. |
+| Diagnose | Record country and movement conflicts before output filtering. |
+| Output | Remove unassigned points, then singleton excursions; review the remaining points before grouping. |
 
-Each control also has its positive form, such as `--motion-denoise` or
-`--remove-unassigned`. Individual stage switches apply only with the master
-enabled: `--no-denoise` bypasses every stage even if an individual stage is
-explicitly enabled later in the command. For example, `--no-motion-denoise
---no-remove-unassigned --no-singleton-denoise` keeps those records while leaving country inference
-active. Normalization is part of the enabled pipeline, not an optional filter.
+The master switch and each optional stage default to **on** in both views.
+All controls are grouped under **Denoising** in `--help`.
 
-One policy object supplies
-**1,000 km/h**, **10 km per-position allowance**, and a **60-minute maximum gap**.
-Use `--max-speed-kmh`, `--position-allowance-meters` (legacy alias
-`--motion-slack-meters`), and `--max-gap-minutes` to change them. A gap is between
-adjacent required observations, not the total duration of a context window.
-These are explicit policy assumptions, not measured GPS accuracy.
+| Disable flag | Effect |
+| --- | --- |
+| `--no-denoise` | Bypass the whole pipeline; restore raw records, order, and baseline labels. |
+| `--no-motion-denoise` | Skip motion exclusion; other stages still use movement bounds. |
+| `--no-border-denoise` | Skip reference-map refinement of named countries. |
+| `--no-visit-denoise` | Skip single-epoch visit-context inference. |
+| `--no-coastal-denoise` | Skip reference refinement and contextual inference for raw-unassigned points. |
+| `--no-remove-unassigned` | Keep remaining unassigned points. |
+| `--no-singleton-denoise` | Keep one-timestamp country excursions. |
 
-The standalone script applies these passes in order:
+Each flag has a positive form, such as `--motion-denoise`. Individual stage
+switches apply while the master is enabled; they cannot override `--no-denoise`.
+Normalization is part of the enabled pipeline. Disabling one stage does not
+exempt a point from the others.
 
-1. **Normalize:** exact duplicate fixes retain record counts but contribute one
-   observation. Timed tracking records are grouped into chronological epochs.
-   Denoised equal-time ordering is deterministic; raw mode preserves input order.
-2. **Motion:** an isolated observation needs impossible incoming and outgoing
-   legs, with every neighboring alternative supporting a feasible bypass. The
-   maximum gap applies on both sides. Competing rejection proposals cannot
-   delete each other's anchors. GPX segment IDs never determine eligibility.
-3. **Map evidence:** refine a named coordinate only when its original country's
-   reference excludes it, every nearby alternative reference is available, and
-   exactly one includes it. For unassigned coordinates, exactly one fully
-   checked reference must include the point; no source exclusion is needed. This coordinate-only pass also handles POIs and
-   untimed points. Missing/overlapping evidence preserves the baseline label.
-4. **Visit support:** freeze the map-adjudicated evidence. An isolated one-epoch
-   country switch A → X → A can join A only with **two distinct confirming A
-   epochs on each side**, bounded adjacent gaps, feasible movement, and every X
-   position within A's polygon allowance. This same rule handles named and
-   unassigned X. Multiple records at one timestamp do not confirm a visit.
-   Conflicting epochs, missing intervening labels, weak anchors, deeper country
-   observations, multi-epoch visits, and one-way transitions are preserved.
-5. **Coastal context:** infer remaining unassigned track points bracketed by the
-   same evidence-backed country only with unique nearby country geometry.
-   Automatic context inference requires a reference and uses the configured
-   position allowance, with discovery capped at 10 km. Direct reference
-   coverage was already resolved before visit inference. Observed map disagreement is diagnostic only; a distant observation
-   cannot enlarge another point's tolerance. Inferred labels never become
-   anchors or calibration evidence in another pass.
-6. **Remove unassigned:** remove every record whose final country is still
-   unassigned, including timed/untimed tracks, routes, and POIs. Points resolved
-   to a country by earlier passes are kept. This stage neither guesses a
-   country nor reruns inference after removal.
-7. **Singleton excursions:** freeze the remaining timed view, including tracks,
-   routes, and POIs. At an interior timestamp, require the immediately preceding
-   and following **distinct timestamps** to each support the same single named
-   country A. Filter other named countries X at the middle timestamp, including
-   simultaneous A/X alternatives. Duplicate copies do not add time support.
-   Unassigned labels at any of these epochs are barriers. Generate all proposals
-   before removal; abstain when a supporting neighbor epoch is itself proposed
-   for removal. No cascading, relabeling, or inference rerun occurs. Endpoints,
-   untimed points, and consecutive multi-timestamp visits stay intact.
+| Setting | Default |
+| --- | --- |
+| `--max-speed-kmh` | 1,000 km/h |
+| `--position-allowance-meters` | 10,000 m per position; `--motion-slack-meters` is an alias. |
+| `--max-gap-minutes` | 60 minutes between adjacent required observations. |
+| `--gps-radius-meters` | Use the position allowance for context; an explicit value overrides visit/coastal context radii. |
 
-Turns, stops, detours, changing transport, short visits, and water travel are
-normal. The visit rule is an explicit uncertainty policy: a genuine one-sample
-border visit inside the allowance is indistinguishable from a GPS blip and may
-be smoothed. The inference passes preserve coherent visits with multiple
-timestamps and deep-interior singletons. The final singleton policy can still
-filter a one-timestamp excursion regardless of distance or elapsed gap. The motion rule assumes one traveler's history;
-competing trajectories remain unresolved. Planned routes and POIs are excluded
-from motion and visit inference. Their coordinate-based map refinement remains
-available.
+These are configured assumptions, not measured GPS accuracy. A manual context
+radius does not change motion bounds or direct map evidence. Zero position
+allowance disables uncertainty-based visit smoothing; direct reference geometry
+can still establish a country label.
 
-Singleton filtering is an explicit presentation policy rather than a GPS-error
-test. It uses timestamp support and return context, not the speed, radius, or
-one-hour inference limit. A sparse real visit can be removed. In particular,
-the converter represents a Google semantic visit by its start time, so zero
-GPX span does not imply zero source-visit duration. Use
-`--no-singleton-denoise` to retain those observations. If unassigned removal is
-enabled, those points are filtered before the singleton snapshot; with
-`--no-remove-unassigned`, retained unknowns can prevent an A → X → A match.
+Output filtering runs once, after inference. Unassigned removal uses the final
+country label. Singleton filtering then removes one-timestamp `A → X → A`
+excursions, including simultaneous alternatives, when neighboring epochs support
+A. It preserves endpoints, untimed points, and consecutive multi-timestamp visits.
+Retained unknowns are barriers; removing them can expose a singleton pattern.
+Neither filter relabels points or reruns inference.
 
-`--gps-radius-meters N` overrides the radius for **both visit and coastal context**;
-it does not change physical speed checks or independent map evidence. In manual
-mode coastal inference uses exactly that radius. Increasing the position
-allowance makes motion exclusion less aggressive and country-context inference
-more permissive. Zero allowance disables uncertainty-based visit smoothing;
-direct reference geometry can still establish country membership.
+Singleton filtering is a presentation policy without a distance or elapsed-gap
+limit. It can hide a sparse real visit. The converter keeps only the start of a
+Google semantic visit, so zero GPX span does not establish zero source-visit
+duration. Use `--no-singleton-denoise` to retain such observations.
+See the [denoising audit](docs/denoising_audit.md) for exact rules, phase boundaries,
+accounting, and test coverage.
 
-`--no-motion-denoise` disables motion exclusion only; country-context inference
-and movement diagnostics still use the shared physical bounds. Disabling one
-stage does not prevent another enabled stage from changing or removing the
-same observation. In particular, final unassigned removal remains active when
-coastal inference or motion exclusion is disabled.
-Custom `--country-data` stays offline and does not fetch
-reference maps; an explicit manual radius remains available for local data.
-
-The footer separates motion exclusions, map corrections, visit/coastal
-inferences, unassigned removals, and singleton removals. Corrections can overlap,
-but removal counts are disjoint: represented + motion-excluded +
-unassigned-removed + singleton-removed equals input records. Singleton excursion
-counts represent distinct removed country/timestamp pairs. Diagnostics describe
-the evidence before both final output filters. `--explain` lists decisions and retained one-way movement
-contradictions. Unresolved simultaneous countries are reported as alternatives;
-row order at an identical timestamp does not establish travel. An impossible
-one-way transition alone cannot identify which endpoint or timestamp is wrong.
-
-All inference describes approximate recorded visit context. It establishes
-neither land presence nor an immigration visit or a calibrated probability.
-Reference administrative polygons can include water. See the
-[denoising audit](docs/denoising_audit.md) for the contract, QA evidence, and limits.
-The old short-run `--gps-max-points` / `--gps-max-minutes` rules remain removed.
-
-Denoising changes only the displayed analysis; it never writes or modifies
-GPX files. The pruner's selection and removal preview always use original
-points and geometric country assignments.
+## Boundary data
 
 The first run downloads public [Natural Earth country boundaries](https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/)
-into the ignored `var/` folder beside the script; later runs work offline.
-Use `--country-data countries.geojson` for an existing local copy. Coordinates
-stay local. The table reflects recorded points, including transit; it does not
-infer countries between samples. Unmatched points are counted separately; “Unassigned” does not prove offshore.
-Baseline names and country geometry follow Natural Earth; reference adjudication
-can refine the displayed geographic label.
-`10m` denotes a 1:10 million map scale, not ten-metre positional accuracy.
+to ignored `var/` storage beside the script. Cached maps work offline.
+`--country-data countries.geojson` uses local boundaries without fetching
+reference maps. Requests for public maps contain country codes, never GPX
+coordinates or timestamps.
 
-Country-map verification downloads smaller per-country reference polygons
-from [geoBoundaries gbOpen](https://www.geoboundaries.org/api.html), produced by
-William & Mary geoLab and contributing boundary providers, pinned to commit
-`9469f09592ced973a3448cf66b6100b741b64c0d`. The collection is CC BY 4.0 compliant;
+Natural Earth supplies baseline names and geometry. `10m` means a 1:10 million
+map scale, not ten-metre accuracy. Unmatched points are unassigned; that label
+does not prove offshore. Administrative polygons can include water, and the
+analysis does not infer countries between recorded samples.
+
+Reference polygons come from [geoBoundaries gbOpen](https://www.geoboundaries.org/api.html),
+produced by William & Mary geoLab and contributing boundary providers, pinned to
+commit `9469f09592ced973a3448cf66b6100b741b64c0d`. The collection is CC BY 4.0 compliant;
 [country metadata](https://www.geoboundaries.org/api/current/gbOpen/ALL/ADM0/)
-identifies original sources and licenses. Cached files live under ignored
-`var/coastlines/`, and subsequent runs work offline. Requests contain country
-codes, never GPX coordinates or timestamps. Unavailable references leave
-unsupported gaps visible with a diagnostic. `--country-data` keeps using only
-your local boundaries and never automatically fetches reference data.
+identifies original sources and licenses. References are cached under
+`var/coastlines/`. Map refinement preserves baseline labels when a required
+reference is unavailable; `--verbose` reports the fallback and affected map names.
 
-`gpx_prune.py` previews points selected for removal, then requires an interactive
-terminal and an explicit `yes` before writing a new GPX. Keep `gpx_countries.py`
-beside it for the shared country/time summary.
+## Prune GPX points
+
+`gpx_prune.py` previews selected original points and requires an interactive
+terminal and explicit `yes` before writing a new file. Keep `gpx_countries.py`
+beside it for the shared country/time summary. Pruner selection and preview use
+original geometric assignments, independently of denoising.
 
 ```sh
 python3 gpx_prune.py history.gpx --countries CA US --start 2026-01-01 --end 2026-01-31 --dry-run
@@ -215,19 +144,22 @@ python3 gpx_prune.py history.gpx --countries CA US --start 2026-01-01 --end 2026
 ```
 
 At least one of `--start`, `--end`, or `--countries` is required. Supplied filters
-intersect: the example selects only CA/US points inside the time window. Country
-names or ISO codes are accepted; names with spaces should be quoted. Bounds are
-inclusive and date-only bounds cover whole UTC days; full timestamps require a
-timezone. Untimed points never match a time filter.
+intersect: these examples select CA/US points within the time window. Country
+names or ISO codes are accepted; quote names with spaces. Bounds are inclusive.
+Date-only bounds cover whole UTC days; full timestamps require a timezone.
+Untimed points never match a time filter.
 
 `--dry-run` never prompts or writes. The default output is `INPUT_pruned.gpx`;
-`-o` chooses another new filename. Existing files are never overwritten and the
+`-o` selects another new filename. Existing files are never overwritten, and the
 input stays unchanged. Remaining tracks/routes are split at removed gaps.
 
-In an existing checkout, private exports may still be in the repository-root
-`var/` folder; the local project `var` link reuses those files and boundary caches.
-New checkouts create an ignored `var/` directory beside these scripts. Input and
-output arguments are always resolved from the current working directory.
+## Local files and tests
 
-All scripts support Python 3.9+. Tests: `python3 -m pip install pytest`, then
-`python3 -m pytest -q`. CI tests Python 3.9 and 3.13.
+Keep private exports, generated files, and map caches outside Git or under ignored
+`var/` storage. Existing checkouts may use the project `var` link to reuse the
+repository-root private data and caches. New checkouts create `var/` beside the
+scripts. Input/output paths resolve from the current working directory.
+
+Install pytest with `python3 -m pip install pytest`, then run
+`python3 -m pytest -q` from the project or repository root. CI uses Python 3.9
+and 3.13. The scripts remain usable when copied out of the repository.

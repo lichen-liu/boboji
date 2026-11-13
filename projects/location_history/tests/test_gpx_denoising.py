@@ -359,4 +359,4 @@ def test_explanations_separate_exclusions_from_explicit_mapping_inference():
     fixes, report = script.denoise_samples(samples([(.1, -.001), (.1, .002), (.1, -.001)]), coast(), gps_radius_meters=500, remove_unassigned=False)
     text = script.format_decisions(report)
     assert "explicit coastal tolerance" in text and "Unassigned" in text and "Alpha" in text
-    assert "not measured GPS accuracy" in script.format_denoising(report)
+    assert "not measured GPS accuracy" in script.format_denoising(report, verbose=True)

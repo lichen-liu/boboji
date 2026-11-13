@@ -6,6 +6,7 @@ the user's positive allowance and the default CLI behavior.
 
 import io
 import json
+import logging
 from urllib.error import URLError
 
 import pytest
@@ -150,14 +151,16 @@ def test_reference_download_is_cached_and_keeps_the_original_country_identity(tm
 
 
 @pytest.mark.parametrize("failure", [URLError("offline"), ValueError("bad JSON")])
-def test_missing_reference_preserves_unknowns_and_reports_the_limit(tmp_path, monkeypatch, capsys, failure):
+def test_missing_reference_preserves_unknowns_and_reports_the_limit(tmp_path, monkeypatch, capsys, caplog, failure):
     def unavailable(*_args, **_kwargs):
         raise failure
     monkeypatch.setattr(script, "urlopen", unavailable)
-    fixes, report = script.denoise_samples(route(), coast(), coastal_reference=lambda country:
-                                         script.load_coastal_reference(country, "AAA", tmp_path), remove_unassigned=False)
+    with caplog.at_level(logging.INFO, logger=script.LOGGER.name):
+        fixes, report = script.denoise_samples(route(), coast(), coastal_reference=lambda country:
+                                             script.load_coastal_reference(country, "AAA", tmp_path), remove_unassigned=False)
     assert report["inferred"] == 0 and report["coastal_unavailable"] == ["Alpha"]
-    assert "unavailable" in capsys.readouterr().err
+    assert not capsys.readouterr().err
+    assert "Reference map unavailable for Alpha" in caplog.text and str(failure) in caplog.text
     assert [f.country for f in fixes] == [A, None, None, None, A]
 
 
@@ -177,8 +180,13 @@ def test_normal_cli_enables_automatic_coastal_handling_without_an_extra_flag(tmp
     output = capsys.readouterr().out
     rows = [line for line in output.splitlines() if line.startswith('|')][2:]
     assert len(rows) == 1 and "| Alpha" in rows[0]
-    assert "automatic from reference country polygons and the position allowance" in output
-    assert "10,000 m effective; map disagreement 2,002 m from 1 reference-confirmed locations" in output
+    assert "reference 1" in output and "coastal 1" in output
+    assert "Reference map details" not in output
+    assert script.main([str(source), "--timeline", "--no-remove-unassigned", "--verbose"]) == 0
+    details = capsys.readouterr().out
+    map_row = next(line for line in details.split("Reference map details\n", 1)[1].splitlines()
+                   if line.startswith("| Alpha"))
+    assert [cell.strip() for cell in map_row.split("|")[1:-1]] == ["Alpha", "10,000", "2,002", "1"]
     assert source.read_text() == original
     for flag in ["--no-coastal-denoise", "--no-denoise"]:
         assert script.main([str(source), "--timeline", flag, "--no-remove-unassigned"]) == 0

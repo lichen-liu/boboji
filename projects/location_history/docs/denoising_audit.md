@@ -1,25 +1,37 @@
 # Denoising audit and QA — 2026-11-13
 
-The prior implementation failed consistency checks. The replacement is a
-standalone, standard-library rule pipeline with a single immutable policy,
-canonical observations, explicit evidence, and decisions made before mutation.
-There are no country-specific names, private dates, or user coordinates in the
-rules or tests. The input GPX and pruner's raw selection remain unchanged.
+The scripts use a standalone, standard-library pipeline. This document records
+its phase boundaries, filtering rules, accounting, and validation. Rules contain
+no country-specific exceptions; test fixtures use invented locations and dates.
+Denoising leaves the input GPX and the pruner's original-point selection unchanged.
 
-## Findings corrected
+## Code structure
 
-| Finding | Correction and regression coverage |
-| --- | --- |
-| Maps were treated as evidence that a visit occurred. A coordinate inside a country can still be one uncertain observation. | Separate geometry adjudication from temporal visit confirmation. A one-epoch return excursion within the declared allowance needs corroborated surrounding context; duplicate records do not confirm a visit. |
-| Motion eligibility depended on segment length and singleton membership. Splitting or merging identical logs changed results. | One chronological-epoch motion rule for all timed tracking points. Source IDs cannot determine eligibility. |
-| Partially copied tracks prevented exclusions, although full duplicates did not. | Canonicalize coordinate/time/type evidence once. No overlap interval voting or copied-path veto. |
-| Equal-time input order changed map correction through invented return runs. | Coordinate-only geometry adjudication; deterministic canonical order and explicit epoch conflicts. |
-| Alternating plausible trajectories could each nominate the other's observations as spikes. | Simultaneous proposal-conflict guard: a rejection cannot use another proposed rejection as its anchor. |
-| Country-wide maxima learned from GPX locations expanded unrelated coastal tolerances. | Reference coverage is per-point evidence. Observed map offsets are diagnostic; unverified points use only the declared allowance. |
-| A manual radius or coastal opt-out could be bypassed by an earlier context pass. | One country-radius precedence rule for visits/coasts; coastal opt-out excludes raw-unassigned inference across passes. |
-| Inferred labels could manufacture later support; actual user failures became singleton epochs only after map corrections. | Freeze post-map evidence before contextual passes. Never use guessed visits/coasts as anchors. |
-| Same-time explanation rows could change order because rejection sets were unordered. | Stable decision ordering includes timestamp, labels, reason, and multiplicity. |
-| Success reports hid unresolved contradictions and focused on test counts. | Full-file acceptance includes specific regressions, preserved visits, count conservation, input hash, unresolved simultaneous countries, and one-way movement contradictions. |
+`DenoiseConfig` is the immutable configuration for one run. It contains stage
+switches and the context-radius override, plus a nested `DenoisePolicy` for
+movement bounds. The CLI builds it once and calls `run_denoising`.
+`denoise_samples` retains its existing keyword interface as an adapter for
+callers and tests.
+
+`run_denoising` calls phase helpers in this order:
+
+| Phase | Implementation | Boundary |
+| --- | --- | --- |
+| Prepare | `normalize_samples`, `tracking_epochs`, `create_denoise_report` | Establish canonical observations, weights, and tracking epochs. |
+| Screen | `screen_motion` | Remove motion proposals against the prepared evidence. |
+| Map | `refine_map_labels` | Adjudicate coordinates and collect geometry-offset diagnostics. |
+| Context | `infer_country_labels` | Freeze map-backed labels once for both visit and coastal inference. |
+| Diagnose | `diagnose_tracking`, `country_conflicts` | Measure conflicts before output filtering. |
+| Output | `filter_analysis` | Remove unassigned points, then singleton excursions; measure the remaining conflicts. |
+
+The report dictionary holds counts, diagnostics, and decision rows; formatting
+functions read it without changing observations. Its existing keys remain
+available to callers. The code stays in one copyable script using the standard
+library.
+
+Global raw mode returns every original record in original order, with baseline
+map labels. It bypasses normalization and all later phases. Optional stage
+switches apply only while denoising is enabled.
 
 ## Assumptions and sources
 
@@ -57,15 +69,14 @@ maximum adjacent gap 60 minutes. These are configurable user policy assumptions,
 not universal physical limits or measured accuracy. A manual country radius
 supersedes the positional radius for both contextual country passes only.
 
-CLI switches, shared thresholds, and explanations are grouped under `Denoising`
-in `--help`. `--denoise` is the default-on master control. Its negative form
-bypasses every stage and restores raw records/order, regardless of individual
+CLI switches, shared thresholds, `--verbose`, and `--explain` are grouped under
+`Denoising` in `--help`. `--denoise` is the default-on master control. Its negative
+form bypasses every stage and restores raw records/order, regardless of individual
 stage enable switches or their position in the command. Optional stages have
 separate default-on controls: `--motion-denoise`, `--border-denoise`,
 `--visit-denoise`, `--coastal-denoise`, `--remove-unassigned`, and
-`--singleton-denoise`; each accepts a
-`--no-...` form. Normalization belongs to the enabled pipeline. Disabling one
-stage does not disable the others or exempt an observation from their rules.
+`--singleton-denoise`; each accepts a `--no-...` form. Normalization belongs to the
+enabled pipeline. Disabling one stage does not disable the others or exempt an observation from their rules.
 
 ### 1. Canonical observations and epochs
 
@@ -89,7 +100,8 @@ an observation for exclusion only if both legs are infeasible against every
 neighboring alternative and all bypass alternatives are feasible. All proposals
 use original evidence. If a proposed exclusion uses an adjacent epoch containing
 another proposed exclusion, abstain for that proposal. This avoids circularly
-rejecting mutually competing trajectories. Never retrain after removal.
+rejecting mutually competing trajectories. Do not recompute proposals after
+removal.
 
 Sparse two-ended observations lack bracketing context and remain. Coherent bursts,
 plausible-speed drift, long gaps, and unresolved competing alternatives may
@@ -133,11 +145,10 @@ span several gaps and is not restricted to one hour in total.
 
 A real one-observation near-border visit is observationally indistinguishable
 from a blip under this allowance. The explicit display policy favors continuity
-in that case. It does not diagnose GPS error or disprove a real visit. Genuine
-multi-epoch brief visits and observations outside the allowance remain visible.
-`--no-visit-denoise` and `--no-denoise` expose the underlying evidence.
-These guarantees describe inference; the independently controlled final
-singleton policy can filter a one-timestamp excursion without relabeling it.
+in that case. Genuine multi-epoch brief visits and observations outside the
+allowance survive this inference rule. `--no-visit-denoise` disables the rule;
+`--no-denoise` restores the original records. The independent final singleton
+policy can still filter a one-timestamp excursion without relabeling it.
 
 ### 5. Coastal context
 
@@ -145,32 +156,33 @@ Use the same frozen map-backed labels, never visit guesses. Remaining unassigned
 timed track points need matching country context on both sides and unique nearby
 geometry. Automatic discovery is limited to 10 km and requires an available
 reference. Contextual guesses use only the declared per-point allowance; direct
-reference coverage was already adjudicated in the geometry stage. Observed offsets are reported but do not
-extrapolate a tolerance to other observations. A manual country radius uses the
+reference coverage was already adjudicated in the geometry stage. Observed
+offsets are reported but do not extrapolate a tolerance to other observations. A manual country radius uses the
 supplied distance instead of reference coverage and automatic allowance.
 
 `--no-coastal-denoise` prevents both raw-unassigned reference refinement and
-contextual inference in every pass. `--no-border-denoise` controls named-country geometry refinement.
+contextual inference in every pass. `--no-border-denoise` controls named-country
+geometry refinement.
 Increasing positional allowance permits more movement and more country-context
 inference; it is not a single monotonic noise-removal aggressiveness setting.
 
 ### 6. Explicit final unassigned removal
 
 `--remove-unassigned` is enabled by default after inference and diagnostics,
-before singleton filtering and summary/timeline grouping. It removes only records whose **final**
-country is `None`, including untimed/nontracking observations and weighted
-copies. Raw-unassigned records resolved to a named country survive. This is an
-explicit presentation policy and never declares the discarded positions to be
-GPS errors or changes the input GPX.
+before singleton filtering and summary/timeline grouping. It removes records
+whose **final** country is `None`, including untimed/nontracking observations and
+weighted copies. Raw-unassigned records resolved to a named country survive.
+This is an output policy; it does not change the GPX or classify discarded
+positions as GPS errors.
 
 `--no-remove-unassigned` retains unresolved observations. Global `--no-denoise`
 bypasses every pass, including removal, and restores raw records/order. Earlier
 stage opt-outs do not disable this independent final policy. Motion exclusions
 and unassigned removals are disjoint. All-removed input is a successful empty
-analysis. Diagnostics remain based on evidence before both output filters; no inference is
-rerun and no new anchors are manufactured. Grouping the retained points can
-join the same country across removed gaps; recorded spans still do not imply
-continuous presence.
+analysis. Pre-filter diagnostics retain their original evidence. A final review
+also measures conflicts among the displayed points; neither review changes
+labels or reruns inference. Grouping retained points can join the same country
+across removed gaps, so recorded spans can include unobserved intervals.
 
 ### 7. Explicit singleton-excursion filtering
 
@@ -211,6 +223,44 @@ describe earlier processing and may include subsequently removed points.
 Explanations preserve raw labels and identify the final removed country and
 surrounding context, including map-refined points.
 
+## Reports and diagnostics
+
+The default footer contains input, kept, and removed point totals; disjoint
+removal counts; label counts per stage; any disabled stages; and conflicts in the
+remaining displayed points. Zero unassigned/untimed counts and unrelated detail
+are omitted from the country-view summary. Recorded-span notes remain short.
+
+`--verbose` adds a phase table, configured movement/context bounds, tracking
+statistics, diagnostics before and after output filters, unavailable reference
+names, and per-country geometry details. Map offsets describe disagreement
+between datasets; they do not fit a GPS error distribution or enlarge another
+observation's radius. Label counts can overlap and include later-removed points.
+Only the removal counts form disjoint categories.
+
+Country conflicts count timed epochs containing more than one country label,
+including retained `None` alternatives and all point types. The report stores
+`before_output_country_epochs` before filtering and `remaining_country_epochs`
+after filtering. The older `unresolved_country_epochs` key remains a tracking-only
+pre-filter count for callers. `remaining_country_alternatives` stores the final
+conflict timestamps and labels. Movement diagnostics use timed tracking epochs
+within the configured adjacent-gap limit. A transition is conflicting when no
+pair of alternatives supports feasible movement.
+`unresolved_motion` describes pre-filter tracking; `remaining_motion` describes
+the points left after filtering. Review only records contradictions; it does not
+remove observations or identify a wrong endpoint.
+
+`--explain` prints individual decisions, preserving raw labels and final-stage
+reasons. It also prints simultaneous country alternatives and movement-conflict
+timestamp pairs from the displayed points. It can be combined with `--verbose`.
+Neither option changes filtering.
+
+Boundary loaders use the standard-library logger for download attempts and
+optional-reference failures at INFO level. The CLI enables those messages on
+stderr with `--verbose`; normal runs are quiet. Missing optional reference maps
+leave unsupported map refinements unchanged, and verbose output lists affected
+countries. Public requests contain no user coordinates or timestamps. A missing
+required baseline map still produces an error if its download fails.
+
 ## QA evidence
 
 Tests use invented geometry and independently generated movement; no personal
@@ -249,21 +299,21 @@ count conservation, and input SHA-256.
 Private dates, coordinates, and export hashes are intentionally excluded here.
 The full output is checked for unresolved anomalies as well as corrected cases.
 
-Run `python3 -m pytest -q`. Required CI uses Python 3.9 and3.13; local verification
-also exercises Python 3.14 and3.15. Cached real-file QA blocks network access and
+Run `python3 -m pytest -q`. Required CI uses Python 3.9 and 3.13; local verification
+also exercises Python 3.14 and 3.15. Cached real-file QA blocks network access and
 checks safe fallback for unavailable references. Synthetic results validate this
 contract; they do not prove every real country observation correct.
 
 ## Remaining limits and diagnostics
 
 A one-way impossible transition cannot identify which endpoint or timestamp is
-wrong; it is reported for review. Simultaneous different countries are unresolved
-alternatives, not a proven travel sequence, and output warns about tie ordering.
+wrong. Final unresolved transitions are reported for review. Simultaneous country
+labels remain alternatives, and the timeline notes that their row order does not
+establish travel.
 Low-speed drift, coherent error bursts, systematic bias, missing reference detail,
 and genuine one-sample border visits remain fundamentally ambiguous. Context
 inference may group nearshore water travel with the surrounding country visit.
 
-No rule establishes continuous presence, immigration entry, territorial waters,
-or a calibrated probability. `--explain` exposes each decision and retained
-movement contradiction. Raw mode remains available, and no denoising pass writes
-or prunes the input GPX.
+Recorded country labels do not establish continuous presence, immigration entry,
+or a calibrated probability. Raw mode remains available, and no denoising pass
+writes or prunes the input GPX.

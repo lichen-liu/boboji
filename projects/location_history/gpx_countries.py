@@ -561,12 +561,18 @@ def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None
 
 
 
+def record_removal(report, fix, reason):
+    counts = report["removed_by_country"].setdefault(fix.country, {})
+    counts[reason] = counts.get(reason, 0) + fix.count
+
+
 def remove_unassigned_fixes(fixes, report):
     """Final output policy: drop unresolved records without inferring a country."""
     retained = []
     for fix in fixes:
         if fix.country is None:
             report["unassigned_removed"] += fix.count
+            record_removal(report, fix, "unassigned")
             report["decisions"].append((fix.time, "Unassigned", "Removed", "final unassigned-removal policy", fix.count))
         else:
             retained.append(fix)
@@ -604,6 +610,7 @@ def remove_singleton_excursions(fixes, report):
         for fix in candidates:
             removed.add(fix)
             excursions.add((time, fix.country))
+            record_removal(report, fix, "singleton")
             report["decisions"].append((time, fix.raw_country[0] if fix.raw_country else "Unassigned",
                                         "Removed", f"single-timestamp {fix.country[0]} excursion between "
                                         f"{country[0]} observations", fix.count))
@@ -630,6 +637,7 @@ def create_denoise_report(fixes, epochs, config, reference):
         "gps_radius_meters": config.gps_radius_meters,
         "max_speed_kmh": policy.max_speed_kmh, "max_gap_minutes": policy.max_gap_minutes,
         "motion_slack_meters": policy.position_allowance_meters, "decisions": [],
+        "removed_by_country": {},
     }
 
 
@@ -637,6 +645,8 @@ def screen_motion(fixes, epochs, policy, report):
     rejected, checked = motion_outliers(epochs, policy)
     report["excluded"] = sum(f.count for f in rejected)
     report["tested"] = len(checked)
+    for fix in rejected:
+        record_removal(report, fix, "motion")
     report["decisions"].extend(
         (f.time, f.raw_country[0] if f.raw_country else "Unassigned", "Excluded",
          "both legs exceed configured movement bound", f.count) for f in rejected)
@@ -775,9 +785,29 @@ def format_denoising(report, verbose=False):
         issues = [f"{count:,} {name}{'' if count == 1 else 's'}" for count, name in
                   ((conflicts, "country conflict"), (movement, "movement conflict")) if count]
         lines.append("Review: " + " · ".join(issues) + ". Use --explain for timestamps.")
+    removals = format_removal_summary(report)
+    if removals:
+        lines.extend(("", removals))
     if verbose:
         lines.extend(("", format_denoising_details(report)))
     return "\n".join(lines)
+
+
+def format_removal_summary(report):
+    countries = report.get("removed_by_country", {})
+    if not countries:
+        return ""
+    reasons = ("motion", "unassigned", "singleton")
+    rows = []
+    totals = [0, 0, 0]
+    for country, counts in sorted(countries.items(), key=lambda item: (item[0] is None, item[0] or ("", ""))):
+        name, code = country or ("Unassigned", "—")
+        values = [counts.get(reason, 0) for reason in reasons]
+        totals = [total + value for total, value in zip(totals, values)]
+        rows.append((name, code, *(f"{value:,}" for value in values), f"{sum(values):,}"))
+    rows.append(("Total", "—", *(f"{value:,}" for value in totals), f"{sum(totals):,}"))
+    return "Removed points by country\n" + text_table(
+        ("Country / territory", "Code", "Motion", "Unassigned", "Singletons", "Total"), rows)
 
 
 def format_denoising_details(report):

@@ -558,12 +558,13 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                     max_gap_minutes=DEFAULT_POLICY.max_gap_minutes,
                     motion_slack_meters=DEFAULT_POLICY.position_allowance_meters,
                     coastal=True, coastal_reference=None, borders=True, visits=True,
-                    remove_unassigned=True):
+                    remove_unassigned=True, motion=True):
     """Normalize → motion → map evidence → visit/coast context → output policy.
 
     Every stage uses immutable observation evidence. Only geometry-backed map
     corrections can become evidence for country context; inferred visits and
     coastal labels never become anchors or calibration observations.
+    enabled=False bypasses every stage, regardless of individual stage switches.
     """
     if not enabled:
         fixes = [Fix(lat, lon, time, lookup(lat, lon), 1, {sequence}, lookup(lat, lon))
@@ -574,11 +575,11 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
         raise ValueError("invalid coastal radius")
     fixes = normalize_samples(samples, lookup)
     epochs = tracking_epochs(fixes)
-    rejected, checked = motion_outliers(epochs, policy)
+    rejected, checked = motion_outliers(epochs, policy) if motion else (set(), set())
     decisions = [(f.time, f.raw_country[0] if f.raw_country else "Unassigned", "Excluded",
                   "both legs exceed configured movement bound", f.count) for f in rejected]
     report = {"enabled": True, "input": sum(f.count for f in fixes), "unique": len(fixes),
-              "excluded": sum(f.count for f in rejected), "tested": len(checked),
+              "excluded": sum(f.count for f in rejected), "tested": len(checked), "motion_enabled": motion,
               "conflicting_epochs": sum(len(epoch) > 1 for epoch in epochs.values()), "inferred": 0,
               "coastal_enabled": coastal, "coastal_automatic": gps_radius_meters is None and coastal_reference is not None,
               "coastal_models": [], "coastal_unavailable": [], "reference_confirmed": 0,
@@ -648,7 +649,8 @@ def format_denoising(report):
         if report["coastal_unavailable"]:
             tolerance += ". Reference unavailable: " + ", ".join(report["coastal_unavailable"])
     return (f"Denoising: on · Input GPX points: {report['input']:,} · Distinct records: {report['unique']:,}\n"
-            f"Excluded as motion outliers: {report['excluded']:,} GPX points · "
+            f"Excluded as motion outliers: {report['excluded']:,} GPX points "
+            f"({'enabled' if report['motion_enabled'] else 'disabled'}) · "
             f"Distinct tracking fixes checked: {report['tested']:,} · "
             f"Conflicting timestamp groups observed: {report['conflicting_epochs']:,}\n"
             f"Movement bounds: {report['max_speed_kmh']:g} km/h; "
@@ -770,26 +772,31 @@ def main(argv=None):
                       help="show country periods from oldest to newest, including return visits")
     view.add_argument("--summary", dest="timeline", action="store_false",
                       help="show the alphabetical country summary (default)")
-    parser.add_argument("--denoise", action=argparse.BooleanOptionalAction, default=True,
-                        help="screen isolated tracking outliers using movement bounds (default: enabled)")
-    parser.add_argument("--coastal-denoise", action=argparse.BooleanOptionalAction, default=True,
-                        help="resolve coastal visit gaps using reference country geometry (default: enabled)")
-    parser.add_argument("--border-denoise", action=argparse.BooleanOptionalAction, default=True,
-                        help="correct border-map disagreements using both countries' reference maps (default: enabled)")
-    parser.add_argument("--visit-denoise", action=argparse.BooleanOptionalAction, default=True,
-                        help="resolve unconfirmed one-epoch excursions within the position allowance (default: enabled)")
-    parser.add_argument("--remove-unassigned", action=argparse.BooleanOptionalAction, default=True,
-                        help="remove remaining unassigned points after denoising, before grouping (default: enabled)")
-    parser.add_argument("--gps-radius-meters", type=float,
-                        help="override the radius for contextual country inference (not direct map evidence)")
-    parser.add_argument("--max-speed-kmh", type=float, default=DEFAULT_POLICY.max_speed_kmh,
-                        help=f"travel-speed bound for isolated outliers (default: {DEFAULT_POLICY.max_speed_kmh})")
-    parser.add_argument("--max-gap-minutes", type=float, default=DEFAULT_POLICY.max_gap_minutes,
-                        help=f"maximum observation gap in minutes (default: {DEFAULT_POLICY.max_gap_minutes})")
-    parser.add_argument("--position-allowance-meters", "--motion-slack-meters", dest="motion_slack_meters",
-                        type=float, default=DEFAULT_POLICY.position_allowance_meters,
-                        help=f"position allowance for motion and country context (default: {DEFAULT_POLICY.position_allowance_meters})")
-    parser.add_argument("--explain", action="store_true", help="print reasons for every excluded or inferred record")
+    denoising = parser.add_argument_group(
+        "Denoising", "Enabled by default. --no-denoise bypasses the entire pipeline, "
+        "regardless of individual stage switches. Stage switches apply while denoising is enabled.")
+    denoising.add_argument("--denoise", action=argparse.BooleanOptionalAction, default=True,
+                          help="enable the whole pipeline, including final unassigned removal (default: enabled)")
+    denoising.add_argument("--motion-denoise", action=argparse.BooleanOptionalAction, default=True,
+                          help="exclude isolated motion outliers; other stages still use movement bounds (default: enabled)")
+    denoising.add_argument("--border-denoise", action=argparse.BooleanOptionalAction, default=True,
+                          help="correct border-map disagreements using both countries' reference maps (default: enabled)")
+    denoising.add_argument("--visit-denoise", action=argparse.BooleanOptionalAction, default=True,
+                          help="resolve unconfirmed one-epoch excursions within the position allowance (default: enabled)")
+    denoising.add_argument("--coastal-denoise", action=argparse.BooleanOptionalAction, default=True,
+                          help="resolve unassigned points using reference geometry and coastal context (default: enabled)")
+    denoising.add_argument("--remove-unassigned", action=argparse.BooleanOptionalAction, default=True,
+                          help="remove remaining unassigned points before grouping (default: enabled)")
+    denoising.add_argument("--gps-radius-meters", type=float,
+                          help="override the radius for contextual country inference (not direct map evidence)")
+    denoising.add_argument("--max-speed-kmh", type=float, default=DEFAULT_POLICY.max_speed_kmh,
+                          help=f"travel-speed bound for motion, context, and diagnostics (default: {DEFAULT_POLICY.max_speed_kmh})")
+    denoising.add_argument("--max-gap-minutes", type=float, default=DEFAULT_POLICY.max_gap_minutes,
+                          help=f"maximum observation gap in minutes (default: {DEFAULT_POLICY.max_gap_minutes})")
+    denoising.add_argument("--position-allowance-meters", "--motion-slack-meters", dest="motion_slack_meters",
+                          type=float, default=DEFAULT_POLICY.position_allowance_meters,
+                          help=f"position allowance for motion and country context (default: {DEFAULT_POLICY.position_allowance_meters})")
+    denoising.add_argument("--explain", action="store_true", help="print reasons for every excluded or inferred record")
     parser.set_defaults(timeline=False)
     args = parser.parse_args(argv)
     for flag, value in (("--gps-radius-meters", args.gps_radius_meters), ("--max-speed-kmh", args.max_speed_kmh),
@@ -812,7 +819,7 @@ def main(argv=None):
                                            max_gap_minutes=args.max_gap_minutes, motion_slack_meters=args.motion_slack_meters,
                                            coastal=args.coastal_denoise, coastal_reference=reference,
                                            borders=args.border_denoise, visits=args.visit_denoise,
-                                           remove_unassigned=args.remove_unassigned)
+                                           remove_unassigned=args.remove_unassigned, motion=args.motion_denoise)
             labels = ((fix.country, fix.time, fix.count) for fix in fixes)
             output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
                       else format_table(*summarize_labels(labels)))

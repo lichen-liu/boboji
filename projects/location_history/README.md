@@ -35,6 +35,7 @@ python3 gpx_countries.py history.gpx --timeline
 python3 gpx_countries.py history.gpx --timeline --denoise
 python3 gpx_countries.py history.gpx --timeline --explain
 python3 gpx_countries.py history.gpx --timeline --no-coastal-denoise
+python3 gpx_countries.py history.gpx --timeline --no-motion-denoise --no-remove-unassigned
 python3 gpx_countries.py history.gpx --timeline --gps-radius-meters 1000
 python3 gpx_countries.py history.gpx --timeline --no-remove-unassigned
 python3 gpx_countries.py history.gpx --timeline --no-denoise
@@ -54,7 +55,27 @@ Spans run from the first to last recorded point in each period and can include
 sampling gaps. The timeline flag replaces `--chronological`.
 Equal-time conflicts retain input order; rows do not resolve which position is true.
 
-`--denoise` is enabled by default in both views. One policy object supplies
+All switches, shared thresholds, and `--explain` are grouped under **Denoising**
+in `--help`. The master `--denoise` switch and every optional stage are enabled
+by default in both views:
+
+| Control | Disables |
+| --- | --- |
+| `--no-denoise` | The entire pipeline; restores original records and baseline country labels. |
+| `--no-motion-denoise` | Isolated motion-outlier exclusion. |
+| `--no-border-denoise` | Reference-map refinement of named countries. |
+| `--no-visit-denoise` | Single-epoch visit-context inference. |
+| `--no-coastal-denoise` | Reference refinement and contextual inference for raw-unassigned points. |
+| `--no-remove-unassigned` | Final removal of still-unassigned records. |
+
+Each control also has its positive form, such as `--motion-denoise` or
+`--remove-unassigned`. Individual stage switches apply only with the master
+enabled: `--no-denoise` bypasses every stage even if an individual stage is
+explicitly enabled later in the command. For example, `--no-motion-denoise
+--no-remove-unassigned` keeps those records while leaving country inference
+active. Normalization is part of the enabled pipeline, not an optional filter.
+
+One policy object supplies
 **1,000 km/h**, **10 km per-position allowance**, and a **60-minute maximum gap**.
 Use `--max-speed-kmh`, `--position-allowance-meters` (legacy alias
 `--motion-slack-meters`), and `--max-gap-minutes` to change them. A gap is between
@@ -110,11 +131,12 @@ allowance makes motion exclusion less aggressive and country-context inference
 more permissive. Zero allowance disables uncertainty-based visit smoothing;
 direct reference geometry can still establish country membership.
 
-`--no-border-denoise` disables named-country map refinement. `--no-visit-denoise` disables the
-single-epoch confirmation pass. `--no-coastal-denoise` disables both direct-reference refinement and contextual
-inference for raw-unassigned coordinates. `--no-denoise` restores every original record
-and baseline map label, including all unassigned records.
-`--no-remove-unassigned` disables only the final removal stage. Custom `--country-data` stays offline and does not fetch
+`--no-motion-denoise` disables motion exclusion only; country-context inference
+and movement diagnostics still use the shared physical bounds. Disabling one
+stage does not prevent another enabled stage from changing or removing the
+same observation. In particular, final unassigned removal remains active when
+coastal inference or motion exclusion is disabled.
+Custom `--country-data` stays offline and does not fetch
 reference maps; an explicit manual radius remains available for local data.
 
 The footer separates motion exclusions, map corrections, visit/coastal

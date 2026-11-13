@@ -125,7 +125,8 @@ def test_pruner_previews_original_points_even_when_country_report_denoises_them(
     original = f'<gpx xmlns="{NS[1:-1]}"><trk><trkseg>{track}</trkseg></trk></gpx>'
     source.write_text(original)
     assert gpx_countries.main([str(source), "--country-data", str(boundaries)]) == 0
-    assert "| Beta" not in capsys.readouterr().out
+    country_table = capsys.readouterr().out.split("\n\n", 1)[0]
+    assert "| Beta" not in country_table
     assert script.main(arguments(files, "--countries", "BB", "--dry-run")) == 0
     report = capsys.readouterr().out
     assert "Matching points to remove: 1 of 13" in report and "| Beta" in report

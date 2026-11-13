@@ -311,7 +311,8 @@ def test_denoising_default_and_opt_out_in_both_views(tmp_path, capsys, flags, fi
     source.write_bytes(original)
     assert script.main([str(source), "--country-data", str(boundaries), *view, *flags, "--no-remove-unassigned"]) == 0
     output = capsys.readouterr().out
-    assert ("| Beta" not in output) == filtered
+    country_table = output.split("\n\n", 1)[0]
+    assert ("| Beta" not in country_table) == filtered
     assert f"Denoising: {'on' if filtered else 'off'}" in output
     if filtered:
         assert "Input: 14" in output and "Kept: 12" in output and "Removed: 2" in output

@@ -230,6 +230,14 @@ removal counts; label counts per stage; any disabled stages; and conflicts in th
 remaining displayed points. Zero unassigned/untimed counts and unrelated detail
 are omitted from the country-view summary. Recorded-span notes remain short.
 
+When removals occur, the footer includes a country/code table with motion,
+unassigned, singleton, and total counts. `removed_by_country` records weighted
+counts at each removal stage using the point's country label at that moment.
+Motion uses the baseline label; singleton filtering uses the final inferred or
+map-refined label. The table is not reconstructed from explanation text or raw
+labels. Its reason totals match the disjoint removal counters; label changes
+alone never enter it. With no removals, the table is omitted.
+
 `--verbose` adds a phase table, configured movement/context bounds, tracking
 statistics, diagnostics before and after output filters, unavailable reference
 names, and per-country geometry details. Map offsets describe disagreement

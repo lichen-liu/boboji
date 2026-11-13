@@ -57,10 +57,10 @@ def test_ambiguous_or_missing_border_evidence_never_rewrites_a_named_country(con
     assert report["border_corrected"] == 0
 
 
-def test_a_one_way_country_transition_does_not_become_a_return_excursion():
+def test_verified_map_membership_does_not_depend_on_a_return_excursion():
     records = samples([(.01, -.01), (.01, .003), (.01, .005)])
     fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps)
-    assert [f.country for f in fixes] == [A, B, B] and report["border_corrected"] == 0
+    assert [f.country for f in fixes] == [A, A, A] and report["border_corrected"] == 2
 
 
 def marker_records():
@@ -78,7 +78,7 @@ def test_impossible_isolated_marker_is_excluded_across_logging_breaks(copies):
     assert report["excluded"] == copies
     assert sum(f.count for f in fixes) + report["excluded"] == len(records)
     assert all(f.time != BASE + timedelta(minutes=2) for f in fixes)
-    assert "isolated marker contradicts surrounding tracking" in script.format_decisions(report)
+    assert "both legs exceed configured movement bound" in script.format_decisions(report)
 
 
 def test_a_later_real_trip_to_the_markers_country_is_preserved():
@@ -98,11 +98,11 @@ def test_an_actual_continuous_track_can_bracket_a_marker_without_an_extra_nearby
     assert all(f.latitude == 0 for f in fixes)
 
 
-@pytest.mark.parametrize("context", ["no_corroboration", "long_gap", "competing_tracks", "poi"])
+@pytest.mark.parametrize("context", ["missing_return", "long_gap", "competing_tracks", "poi"])
 def test_unsupported_isolated_marker_cases_remain_unresolved(context):
     records = marker_records()
-    if context == "no_corroboration":
-        records = records[1:]
+    if context == "missing_return":
+        records = records[:3]
     elif context == "long_gap":
         records[-1] = (0, .002, BASE + timedelta(hours=2), 4)
     elif context == "competing_tracks":
@@ -129,7 +129,7 @@ def test_position_allowance_also_controls_automatic_coastal_country_context():
         return coast()
     fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference)
     assert all(f.country == A for f in fixes)
-    assert report["coastal_models"] == [("Alpha", 0, 0)]
+    assert report["coastal_models"] == []
     assert report["coastal_effective"] == [("Alpha", 10000)]
     tight, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=1000)
     assert [f.country for f in tight] == [A, None, None, A]

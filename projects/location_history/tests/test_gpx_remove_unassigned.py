@@ -31,7 +31,7 @@ def points(longitudes):
 
 
 def denoise(records, lookup, **options):
-    settings = {"borders": False, "coastal": False, "visits": False}
+    settings = {"borders": False, "coastal": False, "visits": False, "singletons": False}
     settings.update(options)
     return script.denoise_samples(records, lookup, **settings)
 

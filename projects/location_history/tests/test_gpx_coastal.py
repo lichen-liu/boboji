@@ -92,7 +92,8 @@ def test_named_foreign_visit_is_preserved_even_inside_an_automatic_band():
     coarse = script.country_lookup({"type": "FeatureCollection", "features": [
         feature(*A, -1, -1, 0, 1), feature(*B, .009, .5, .01, .6)]})
     records = samples([(-.01, -.001), (-.01, .018), (-.01, -.001), (.55, .0095), (.55, -.001)])
-    fixes, report = script.denoise_samples(records, coarse, coastal_reference=reference, motion_slack_meters=0, borders=False, remove_unassigned=False)
+    fixes, report = script.denoise_samples(records, coarse, coastal_reference=reference, motion_slack_meters=0,
+                                         borders=False, remove_unassigned=False, singletons=False)
     assert fixes[3].country == B and fixes[3].raw_country == B
     assert report["excluded"] == 0
 

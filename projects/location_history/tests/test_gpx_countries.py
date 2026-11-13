@@ -195,7 +195,8 @@ def test_output_view_flags(tmp_path, capsys, flags, expected):
         <wpt lat="1" lon="21"><time>2026-01-02T00:30:00+02:00</time></wpt>
         <wpt lat="2" lon="2"><time>2026-01-01T00:00:00Z</time></wpt>
     '''))
-    assert script.main([str(source), "--country-data", str(boundaries), *flags, "--no-remove-unassigned"]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), *flags,
+                        "--no-remove-unassigned", "--no-singleton-denoise"]) == 0
     output = capsys.readouterr().out
     rows = [line.split("|")[1].strip() for line in output.splitlines()[2:] if line.startswith("|")]
     assert rows == expected

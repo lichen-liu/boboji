@@ -553,12 +553,51 @@ def remove_unassigned_fixes(fixes, report):
     return retained
 
 
+def remove_singleton_excursions(fixes, report):
+    """Filter one-timestamp A → X → A excursions against a frozen visible view.
+
+    This is a presentation policy for all timed point types, independent of
+    physical inference bounds. Simultaneous alternatives never acquire order.
+    Competing proposals cannot erase the epochs supporting one another.
+    """
+    epochs = defaultdict(list)
+    for fix in fixes:
+        if fix.time is not None:
+            epochs[fix.time].append(fix)
+    times = sorted(epochs)
+    labels = {time: {fix.country for fix in epoch} for time, epoch in epochs.items()}
+    proposals = {}
+    for i in range(1, len(times) - 1):
+        left, time, right = times[i - 1:i + 2]
+        context = labels[left]
+        if len(context) != 1 or None in context or context != labels[right] or None in labels[time]:
+            continue
+        country = next(iter(context))
+        candidates = [fix for fix in epochs[time] if fix.country != country]
+        if candidates:
+            proposals[time] = (left, right, country, candidates)
+    removed = set()
+    excursions = set()
+    for time, (left, right, country, candidates) in proposals.items():
+        if left in proposals or right in proposals:
+            continue
+        for fix in candidates:
+            removed.add(fix)
+            excursions.add((time, fix.country))
+            report["decisions"].append((time, fix.raw_country[0] if fix.raw_country else "Unassigned",
+                                        "Removed", f"single-timestamp {fix.country[0]} excursion between "
+                                        f"{country[0]} observations", fix.count))
+    report["singleton_removed"] += sum(fix.count for fix in removed)
+    report["singleton_excursions"] += len(excursions)
+    return [fix for fix in fixes if fix not in removed]
+
+
 def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                     max_speed_kmh=DEFAULT_POLICY.max_speed_kmh,
                     max_gap_minutes=DEFAULT_POLICY.max_gap_minutes,
                     motion_slack_meters=DEFAULT_POLICY.position_allowance_meters,
                     coastal=True, coastal_reference=None, borders=True, visits=True,
-                    remove_unassigned=True, motion=True):
+                    remove_unassigned=True, motion=True, singletons=True):
     """Normalize → motion → map evidence → visit/coast context → output policy.
 
     Every stage uses immutable observation evidence. Only geometry-backed map
@@ -586,6 +625,7 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
               "coastal_effective": [], "border_corrected": 0, "borders_enabled": borders,
               "visit_inferred": 0, "visits_enabled": visits,
               "unassigned_removed": 0, "remove_unassigned_enabled": remove_unassigned,
+              "singleton_removed": 0, "singleton_excursions": 0, "singleton_enabled": singletons,
               "map_unavailable": set(),
               "max_inferred_distance_meters": 0, "gps_radius_meters": gps_radius_meters,
               "max_speed_kmh": max_speed_kmh, "max_gap_minutes": max_gap_minutes,
@@ -617,10 +657,12 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
     for left, right in zip(times, times[1:]):
         if policy.gap_ok(left, right) and not any(policy.feasible(a, b) for a in final_epochs[left] for b in final_epochs[right]):
             report["unresolved_motion"].append((left, right))
-    # Diagnose the evidence before filtering so removal cannot hide a retained
-    # contradiction or create a new inference/anchor across the removed gap.
+    # Diagnose before output filtering. Inference never runs after removals.
     if remove_unassigned:
         retained = remove_unassigned_fixes(retained, report)
+    # Freeze the view selected by the unassigned policy, then filter once.
+    if singletons:
+        retained = remove_singleton_excursions(retained, report)
     report["decisions"].sort(key=decision_sort_key)
     report["map_unavailable"] = sorted(report["map_unavailable"])
     return retained, report
@@ -666,11 +708,14 @@ def format_denoising(report):
             f"({'enabled' if report['borders_enabled'] else 'disabled'}).\n"
             f"Unassigned removal: {'on' if report['remove_unassigned_enabled'] else 'off'} · "
             f"Removed unassigned GPX points: {report['unassigned_removed']:,}.\n"
-            "Diagnostics below describe evidence before final unassigned removal.\n"
+            f"Singleton-excursion removal: {'on' if report['singleton_enabled'] else 'off'} · "
+            f"Removed GPX points: {report['singleton_removed']:,} · Excursions: {report['singleton_excursions']:,}.\n"
+            "Diagnostics below describe evidence before final output filters.\n"
             f"Unresolved simultaneous country alternatives: {report['unresolved_country_epochs']:,} · "
             f"Unresolved movement transitions: {len(report['unresolved_motion']):,}.\n"
             f"Unavailable border references: {', '.join(report['map_unavailable']) or 'none'}.\n"
-            "Duration alone does not erase a named country. Coastal labels are approximate visit context, not proof of land presence.")
+            "Singleton removal is a presentation policy, not proof of GPS error. "
+            "Coastal labels are approximate visit context, not proof of land presence.")
 
 
 def format_decisions(report):
@@ -776,7 +821,7 @@ def main(argv=None):
         "Denoising", "Enabled by default. --no-denoise bypasses the entire pipeline, "
         "regardless of individual stage switches. Stage switches apply while denoising is enabled.")
     denoising.add_argument("--denoise", action=argparse.BooleanOptionalAction, default=True,
-                          help="enable the whole pipeline, including final unassigned removal (default: enabled)")
+                          help="enable the whole pipeline, including final output filters (default: enabled)")
     denoising.add_argument("--motion-denoise", action=argparse.BooleanOptionalAction, default=True,
                           help="exclude isolated motion outliers; other stages still use movement bounds (default: enabled)")
     denoising.add_argument("--border-denoise", action=argparse.BooleanOptionalAction, default=True,
@@ -787,6 +832,8 @@ def main(argv=None):
                           help="resolve unassigned points using reference geometry and coastal context (default: enabled)")
     denoising.add_argument("--remove-unassigned", action=argparse.BooleanOptionalAction, default=True,
                           help="remove remaining unassigned points before grouping (default: enabled)")
+    denoising.add_argument("--singleton-denoise", action=argparse.BooleanOptionalAction, default=True,
+                          help="filter one-timestamp A-to-X-to-A excursions in the selected view (default: enabled)")
     denoising.add_argument("--gps-radius-meters", type=float,
                           help="override the radius for contextual country inference (not direct map evidence)")
     denoising.add_argument("--max-speed-kmh", type=float, default=DEFAULT_POLICY.max_speed_kmh,
@@ -819,7 +866,8 @@ def main(argv=None):
                                            max_gap_minutes=args.max_gap_minutes, motion_slack_meters=args.motion_slack_meters,
                                            coastal=args.coastal_denoise, coastal_reference=reference,
                                            borders=args.border_denoise, visits=args.visit_denoise,
-                                           remove_unassigned=args.remove_unassigned, motion=args.motion_denoise)
+                                           remove_unassigned=args.remove_unassigned, motion=args.motion_denoise,
+                                           singletons=args.singleton_denoise)
             labels = ((fix.country, fix.time, fix.count) for fix in fixes)
             output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
                       else format_table(*summarize_labels(labels)))

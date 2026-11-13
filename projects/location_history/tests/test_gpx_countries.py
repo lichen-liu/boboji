@@ -169,7 +169,7 @@ def test_timeline_keeps_unassigned_without_contradicting_evidence(tmp_path, caps
         <wpt lat="5" lon="5"><time>2026-01-01T01:00:00Z</time></wpt>
         <wpt lat="2" lon="2"><time>2026-01-01T02:00:00Z</time></wpt>
     '''))
-    assert script.main([str(source), "--country-data", str(boundaries), "--timeline", *flags]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), "--timeline", *flags, "--no-remove-unassigned"]) == 0
     output = capsys.readouterr().out
     assert [line.split("|")[1].strip() for line in output.splitlines()[2:] if line.startswith("|")] == [
         "Alpha", "Unassigned", "Alpha"]
@@ -195,7 +195,7 @@ def test_output_view_flags(tmp_path, capsys, flags, expected):
         <wpt lat="1" lon="21"><time>2026-01-02T00:30:00+02:00</time></wpt>
         <wpt lat="2" lon="2"><time>2026-01-01T00:00:00Z</time></wpt>
     '''))
-    assert script.main([str(source), "--country-data", str(boundaries), *flags]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), *flags, "--no-remove-unassigned"]) == 0
     output = capsys.readouterr().out
     rows = [line.split("|")[1].strip() for line in output.splitlines()[2:] if line.startswith("|")]
     assert rows == expected
@@ -205,14 +205,14 @@ def test_output_view_flags(tmp_path, capsys, flags, expected):
 
 def test_summary_and_timeline_flags_are_mutually_exclusive(capsys):
     with pytest.raises(SystemExit) as error:
-        script.main(["missing.gpx", "--summary", "--timeline"])
+        script.main(["missing.gpx", "--summary", "--timeline", "--no-remove-unassigned"])
     assert error.value.code == 2
     assert "not allowed" in capsys.readouterr().err
 
 
 def test_chronological_flag_has_been_renamed(capsys):
     with pytest.raises(SystemExit) as error:
-        script.main(["missing.gpx", "--chronological"])
+        script.main(["missing.gpx", "--chronological", "--no-remove-unassigned"])
     assert error.value.code == 2
     assert "unrecognized arguments" in capsys.readouterr().err
 
@@ -234,7 +234,7 @@ def test_empty_gpx_fails_before_any_download(tmp_path, monkeypatch, capsys):
     source.write_bytes(gpx(""))
     monkeypatch.setattr(script, "urlopen", lambda *_args, **_kwargs: pytest.fail("unexpected network"))
     with pytest.raises(SystemExit) as error:
-        script.main([str(source)])
+        script.main([str(source), "--no-remove-unassigned"])
     assert error.value.code == 2
     captured = capsys.readouterr()
     assert not captured.out and "no track points" in captured.err
@@ -306,7 +306,7 @@ def test_denoising_default_and_opt_out_in_both_views(tmp_path, capsys, flags, fi
         points.extend([point, point] if index == 6 else [point])
     original = gpx('<trk><trkseg>' + ''.join(points) + '</trkseg></trk>')
     source.write_bytes(original)
-    assert script.main([str(source), "--country-data", str(boundaries), *view, *flags]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), *view, *flags, "--no-remove-unassigned"]) == 0
     output = capsys.readouterr().out
     assert ("| Beta" not in output) == filtered
     assert f"Denoising: {'on' if filtered else 'off'}" in output
@@ -321,7 +321,7 @@ def test_denoising_default_and_opt_out_in_both_views(tmp_path, capsys, flags, fi
 @pytest.mark.parametrize("value", ["-1", "nan", "inf", "-inf"])
 def test_invalid_movement_limits_fail_before_file_access(flag, value, capsys):
     with pytest.raises(SystemExit) as error:
-        script.main(["missing.gpx", flag + "=" + value])
+        script.main(["missing.gpx", flag + "=" + value, "--no-remove-unassigned"])
     assert error.value.code == 2
     assert "must be finite" in capsys.readouterr().err
 
@@ -329,7 +329,7 @@ def test_invalid_movement_limits_fail_before_file_access(flag, value, capsys):
 @pytest.mark.parametrize("flag", ["--gps-radius-meters", "--max-speed-kmh", "--max-gap-minutes"])
 def test_zero_positive_limits_fail_before_file_access(flag, capsys):
     with pytest.raises(SystemExit) as error:
-        script.main(["missing.gpx", flag, "0"])
+        script.main(["missing.gpx", flag, "0", "--no-remove-unassigned"])
     assert error.value.code == 2
     assert "positive" in capsys.readouterr().err
 
@@ -338,14 +338,14 @@ def test_zero_motion_slack_is_allowed(tmp_path, capsys):
     boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
     boundaries.write_text(json.dumps(country_data()))
     source.write_bytes(gpx('<wpt lat="2" lon="2"/>'))
-    assert script.main([str(source), "--country-data", str(boundaries), "--motion-slack-meters", "0"]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), "--motion-slack-meters", "0", "--no-remove-unassigned"]) == 0
     assert "0 m allowance per position" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("flag", ["--gps-max-points", "--gps-max-minutes"])
 def test_unsupported_short_visit_rules_are_removed(flag, capsys):
     with pytest.raises(SystemExit) as error:
-        script.main(["missing.gpx", flag, "5"])
+        script.main(["missing.gpx", flag, "5", "--no-remove-unassigned"])
     assert error.value.code == 2
     assert "unrecognized arguments" in capsys.readouterr().err
 
@@ -358,7 +358,7 @@ def test_waypoints_and_planned_routes_are_preserved_without_motion_screening(tmp
         f'<rtept lat="2" lon="{21 if i == 6 else 1}"><time>2026-01-01T00:{i:02}:00Z</time></rtept>'
         for i in range(13)) + '</rte>'
     source.write_bytes(gpx(body))
-    assert script.main([str(source), "--country-data", str(boundaries), "--explain"]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), "--explain", "--no-remove-unassigned"]) == 0
     output = capsys.readouterr().out
     assert "| Beta" in output and "Distinct tracking fixes checked: 0" in output
     assert "Excluded as motion outliers: 0" in output

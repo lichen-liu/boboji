@@ -36,6 +36,7 @@ python3 gpx_countries.py history.gpx --timeline --denoise
 python3 gpx_countries.py history.gpx --timeline --explain
 python3 gpx_countries.py history.gpx --timeline --no-coastal-denoise
 python3 gpx_countries.py history.gpx --timeline --gps-radius-meters 1000
+python3 gpx_countries.py history.gpx --timeline --no-remove-unassigned
 python3 gpx_countries.py history.gpx --timeline --no-denoise
 python3 gpx_countries.py history.gpx > var/visited_countries.md
 ```
@@ -43,9 +44,11 @@ python3 gpx_countries.py history.gpx > var/visited_countries.md
 The default view and `--summary` show one row per country in alphabetical order.
 `--timeline` sorts observations by UTC timestamp, then groups consecutive
 countries into rows with begin, end, recorded span, and point count. Returns
-start new rows: Canada → Peru → Canada produces three rows. Unassigned
-points remain visible and also split periods; there is no blanket offshore
-exclusion, and `--show-offshore` is no longer needed. Untimed points are grouped
+start new rows: Canada → Peru → Canada produces three rows. A final
+`--remove-unassigned` stage is enabled by default: remaining unresolved records
+are removed **before** country grouping. `--no-remove-unassigned` keeps them
+visible and lets them split periods. This is an explicit output policy, not a
+claim that every unmatched point is noise. Untimed retained points are grouped
 by country at the end.
 Spans run from the first to last recorded point in each period and can include
 sampling gaps. The timeline flag replaces `--chronological`.
@@ -86,6 +89,10 @@ The standalone script applies these passes in order:
    coverage was already resolved before visit inference. Observed map disagreement is diagnostic only; a distant observation
    cannot enlarge another point's tolerance. Inferred labels never become
    anchors or calibration evidence in another pass.
+6. **Remove unassigned:** remove every record whose final country is still
+   unassigned, including timed/untimed tracks, routes, and POIs. Points resolved
+   to a country by earlier passes are kept. This stage neither guesses a
+   country nor reruns inference after removal.
 
 Turns, stops, detours, changing transport, short visits, and water travel are
 normal. The visit rule is an explicit uncertainty policy: a genuine one-sample
@@ -106,12 +113,14 @@ direct reference geometry can still establish country membership.
 `--no-border-denoise` disables named-country map refinement. `--no-visit-denoise` disables the
 single-epoch confirmation pass. `--no-coastal-denoise` disables both direct-reference refinement and contextual
 inference for raw-unassigned coordinates. `--no-denoise` restores every original record
-and baseline map label. Custom `--country-data` stays offline and does not fetch
+and baseline map label, including all unassigned records.
+`--no-remove-unassigned` disables only the final removal stage. Custom `--country-data` stays offline and does not fetch
 reference maps; an explicit manual radius remains available for local data.
 
-The footer separates motion exclusions, map corrections, and visit/coastal
-inferences. These stage counts can overlap; retained plus excluded records always
-equal input records. `--explain` lists decisions and retained one-way movement
+The footer separates motion exclusions, map corrections, visit/coastal
+inferences, and final unassigned removals. Corrections can overlap, but removal
+counts are disjoint: represented + motion-excluded + unassigned-removed equals
+input records. Diagnostics describe the evidence before the final removal step. `--explain` lists decisions and retained one-way movement
 contradictions. Unresolved simultaneous countries are reported as alternatives;
 row order at an identical timestamp does not establish travel. An impossible
 one-way transition alone cannot identify which endpoint or timestamp is wrong.

@@ -137,6 +137,25 @@ contextual inference in every pass. `--no-border-denoise` controls named-country
 Increasing positional allowance permits more movement and more country-context
 inference; it is not a single monotonic noise-removal aggressiveness setting.
 
+### 6. Explicit final unassigned removal
+
+`--remove-unassigned` is enabled by default after inference and diagnostics,
+before summary/timeline grouping. It removes only records whose **final**
+country is `None`, including untimed/nontracking observations and weighted
+copies. Raw-unassigned records resolved to a named country survive. This is an
+explicit presentation policy and never declares the discarded positions to be
+GPS errors or changes the input GPX.
+
+`--no-remove-unassigned` retains unresolved observations. Global `--no-denoise`
+bypasses every pass, including removal, and restores raw records/order. Earlier
+stage opt-outs do not disable this independent final policy. Motion exclusions
+and unassigned removals are disjoint; represented + motion-excluded +
+unassigned-removed equals input count. All-removed input is a successful empty
+analysis. Diagnostics remain based on evidence before removal; no inference is
+rerun and no new anchors are manufactured. Grouping the retained points can
+join the same country across removed gaps; recorded spans still do not imply
+continuous presence.
+
 ## QA evidence
 
 Tests use invented geometry and independently generated movement; no personal
@@ -149,7 +168,7 @@ precision/recall estimates.
 
 Independent review added 72 property, adversarial, and control-matrix cases,
 including all 32 combinations of stage switches and manual-radius controls.
-The complete suite passes 930 tests. Checks cover:
+Checks cover:
 
 - Segment splits/merges, source-ID renaming, full and partial exact copies.
 - Input and equal-time permutations, including explanation multiplicities.
@@ -166,7 +185,7 @@ The complete suite passes 930 tests. Checks cover:
 Full local-export acceptance additionally checks both reported singleton
 regressions after map adjudication, the earlier impossible isolated marker,
 genuine multi-day trips, a supported multi-epoch border crossing, coastal
-continuity, retained-plus-excluded count conservation, and input SHA-256.
+continuity, represented-plus-motion-excluded-plus-unassigned-removed count conservation, and input SHA-256.
 Private dates, coordinates, and export hashes are intentionally excluded here.
 The full output is checked for unresolved anomalies as well as corrected cases.
 

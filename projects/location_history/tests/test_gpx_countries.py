@@ -71,7 +71,7 @@ def test_summary_exact_utc_bounds_unknown_times_and_unassigned_row():
     assert "2026-01-01T22:30:00Z" in table and "2026-01-03T02:03:04Z" in table
     assert "2026-01-05T12:00:00Z" in table and "Unassigned" in table
     assert "Countries/territories: 2" in table and "GPX points: 4" in table
-    assert "not continuous stays" in table
+    assert "do not establish continuous stays" in table
 
 
 def test_table_keeps_fractional_precision_and_groups_large_counts():
@@ -116,7 +116,7 @@ def test_unassigned_periods_break_runs_and_untimed_points_are_unplaced():
     assert (total, unassigned, untimed) == (5, 2, 2)
     table = script.format_timeline(*result)
     assert "Recorded periods: 3" in table and "Untimed: 2" in table
-    assert "Untimed points are grouped by country at the end" in table
+    assert "Untimed points follow the timeline" in table
 
 
 def test_timeline_keeps_unassigned_before_grouping_same_country_points():
@@ -134,7 +134,7 @@ def test_timeline_keeps_unassigned_before_grouping_same_country_points():
     assert rows[0][6].strip() == "0:00:00"
     assert "Recorded periods: 3" in table and "GPX points represented: 4" in table
     assert "excluded before grouping" not in table
-    assert "Untimed points are grouped" in table
+    assert "Untimed points follow the timeline" in table
 
 
 def test_unassigned_and_other_countries_both_split_returns():
@@ -241,7 +241,7 @@ def test_empty_gpx_fails_before_any_download(tmp_path, monkeypatch, capsys):
     assert not captured.out and "no track points" in captured.err
 
 
-def test_download_once_then_reuse_cache_offline(tmp_path, monkeypatch):
+def test_download_once_then_reuse_cache_offline(tmp_path, monkeypatch, capsys):
     path = tmp_path / "cache" / "countries.geojson"
     requests = []
 
@@ -254,6 +254,8 @@ def test_download_once_then_reuse_cache_offline(tmp_path, monkeypatch):
     monkeypatch.setattr(script, "urlopen", lambda *_args, **_kwargs: pytest.fail("unexpected network"))
     assert script.load_countries(path, download=True) == country_data()
     assert requests == [script.DATA_URL]
+    captured = capsys.readouterr()
+    assert not captured.out and not captured.err
 
 
 def test_bad_download_does_not_leave_a_corrupt_cache(tmp_path, monkeypatch):
@@ -312,9 +314,8 @@ def test_denoising_default_and_opt_out_in_both_views(tmp_path, capsys, flags, fi
     assert ("| Beta" not in output) == filtered
     assert f"Denoising: {'on' if filtered else 'off'}" in output
     if filtered:
-        assert "Input GPX points: 14" in output and "Distinct records: 13" in output
-        assert "Excluded as motion outliers: 2" in output
-        assert "none supplied" in output
+        assert "Input: 14" in output and "Kept: 12" in output and "Removed: 2" in output
+        assert "Removed points: motion 2" in output
     assert source.read_bytes() == original
 
 
@@ -339,8 +340,9 @@ def test_zero_motion_slack_is_allowed(tmp_path, capsys):
     boundaries, source = tmp_path / "countries.geojson", tmp_path / "input.gpx"
     boundaries.write_text(json.dumps(country_data()))
     source.write_bytes(gpx('<wpt lat="2" lon="2"/>'))
-    assert script.main([str(source), "--country-data", str(boundaries), "--motion-slack-meters", "0", "--no-remove-unassigned"]) == 0
-    assert "0 m allowance per position" in capsys.readouterr().out
+    assert script.main([str(source), "--country-data", str(boundaries), "--motion-slack-meters", "0",
+                        "--no-remove-unassigned", "--verbose"]) == 0
+    assert "position 0 km" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("flag", ["--gps-max-points", "--gps-max-minutes"])
@@ -359,7 +361,8 @@ def test_waypoints_and_planned_routes_are_preserved_without_motion_screening(tmp
         f'<rtept lat="2" lon="{21 if i == 6 else 1}"><time>2026-01-01T00:{i:02}:00Z</time></rtept>'
         for i in range(13)) + '</rte>'
     source.write_bytes(gpx(body))
-    assert script.main([str(source), "--country-data", str(boundaries), "--explain", "--no-remove-unassigned"]) == 0
+    assert script.main([str(source), "--country-data", str(boundaries), "--verbose", "--explain",
+                        "--no-remove-unassigned", "--no-singleton-denoise"]) == 0
     output = capsys.readouterr().out
-    assert "| Beta" in output and "Distinct tracking fixes checked: 0" in output
-    assert "Excluded as motion outliers: 0" in output
+    assert "| Beta" in output.split("\n\n", 1)[0] and "Tracking: 0 checked fixes" in output
+    assert "Removed points: motion 0" in output

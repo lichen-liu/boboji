@@ -51,7 +51,7 @@ def test_default_singleton_policy_counts_duplicates_once_without_relabeling(copi
     assert report["singleton_removed"] == copies and report["singleton_excursions"] == 1
     assert report["visit_inferred"] == report["inferred"] == 0
     assert "single-timestamp Beta excursion between Alpha observations" in script.format_decisions(report)
-    assert f"Removed GPX points: {copies}" in script.format_denoising(report)
+    assert f"singletons {copies} (1 excursion)" in script.format_denoising(report)
     periods, total, unassigned, untimed = script.group_timeline_labels(
         (f.country, f.time, f.count) for f in fixes)
     assert periods == [[A, 2, original[0][2], original[2][2]]]
@@ -220,8 +220,9 @@ def test_cli_default_and_stage_master_controls_preserve_input(tmp_path, capsys, 
     output = capsys.readouterr().out
     assert ("| Beta" not in output) is removed
     if "--no-denoise" not in flags:
-        assert f"Singleton-excursion removal: {'on' if removed else 'off'}" in output
-        assert f"Removed GPX points: {int(removed)}" in output
+        disabled = next(line for line in output.splitlines() if line.startswith("Disabled:"))
+        assert ("singletons" in disabled) is not removed
+        assert f"singletons {int(removed)} ({int(removed)} {'excursion' if removed else 'excursions'})" in output
     assert source.read_bytes() == original
     assert set(tmp_path.iterdir()) == {source, country_data}
 

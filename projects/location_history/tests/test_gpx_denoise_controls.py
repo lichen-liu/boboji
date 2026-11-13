@@ -74,7 +74,9 @@ def test_api_motion_and_unassigned_stages_are_independent(motion, remove):
     if not motion:
         assert report["tested"] == 0
         assert report["unresolved_motion"]  # Disabling deletion keeps movement diagnostics.
-    assert f"GPX points ({'enabled' if motion else 'disabled'})" in script.format_denoising(report)
+    output = script.format_denoising(report)
+    disabled = next(line for line in output.splitlines() if line.startswith("Disabled:"))
+    assert ("motion" in disabled) is not motion
 
 
 @pytest.mark.parametrize("motion_flags,motion", [([], True), (["--motion-denoise"], True),
@@ -90,9 +92,10 @@ def test_cli_defaults_and_independent_stage_controls(inputs, capsys, motion_flag
     assert ("| Beta" in output) is not motion
     assert ("| Unassigned" in output) is not remove
     assert "Denoising: on" in output
-    assert f"Excluded as motion outliers: {2 if motion else 0}" in output
-    assert f"Removed unassigned GPX points: {1 if remove else 0}" in output
-    assert f"GPX points ({'enabled' if motion else 'disabled'})" in output
+    assert f"Removed points: motion {2 if motion else 0}" in output
+    assert f"unassigned {1 if remove else 0}" in output
+    disabled = next(line for line in output.splitlines() if line.startswith("Disabled:"))
+    assert ("motion" in disabled) is not motion
     assert source.read_bytes() == original
 
 
@@ -106,9 +109,11 @@ def test_motion_off_leaves_far_unknowns_to_the_separate_final_removal_stage(inpu
                         "--no-motion-denoise", "--no-border-denoise", "--no-coastal-denoise",
                         "--no-visit-denoise", *remove_flags]) == 0
     output = capsys.readouterr().out
-    assert "Excluded as motion outliers: 0 GPX points (disabled)" in output
-    assert f"Removed unassigned GPX points: {removed}" in output
-    assert f"GPX points represented: {6 - removed} · Unassigned: {3 - removed}" in output
+    assert "Removed points: motion 0" in output and "Disabled: motion" in output
+    assert f"unassigned {removed}" in output
+    assert f"GPX points represented: {6 - removed}" in output
+    if not removed:
+        assert "Unassigned: 3" in output
 
 
 @pytest.mark.parametrize("global_first", [False, True])

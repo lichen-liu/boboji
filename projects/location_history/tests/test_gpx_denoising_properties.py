@@ -36,7 +36,7 @@ def observations(longitudes, minutes=None, latitude=0, sequence=1):
 
 
 def denoise(records, lookup, **options):
-    settings = {"coastal": False, "borders": False}
+    settings = {"coastal": False, "borders": False, "remove_unassigned": False}
     settings.update(options)
     return script.denoise_samples(records, lookup, **settings)
 
@@ -325,7 +325,7 @@ def test_control_matrix_respects_domain_opt_outs_and_manual_country_radius(enabl
     radius = 500 if manual else None
     fixes, report = script.denoise_samples(records, lookup, enabled=enabled, borders=borders,
                                          coastal=coastal, visits=visits, gps_radius_meters=radius,
-                                         coastal_reference=references.get)
+                                         coastal_reference=references.get, remove_unassigned=False)
     assert records == before
     if not enabled:
         assert [(fix.latitude, fix.longitude, fix.time, fix.country) for fix in fixes] == [

@@ -46,6 +46,10 @@ replaces `--chronological`.
 
 The default footer shows input/kept/removed point counts, removal categories,
 label counts by stage, disabled stages, and any conflicts in the displayed points.
+When points are removed, a brief country/code table breaks their counts down by
+motion exclusion, unassigned removal, and singleton filtering, with a total row.
+Countries reflect labels at removal time; earlier label corrections are not
+counted as removals. Duplicate records retain their weights.
 Label counts can overlap; removal categories are disjoint. `--verbose` adds phase
 results, settings, diagnostics before and after output filtering, and reference-map
 details. Download attempts and optional reference failures are logged to stderr

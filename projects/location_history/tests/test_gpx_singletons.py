@@ -218,7 +218,8 @@ def test_cli_default_and_stage_master_controls_preserve_input(tmp_path, capsys, 
     assert script.main([str(source), "--country-data", str(country_data), view, "--no-motion-denoise",
                         "--no-visit-denoise", "--no-border-denoise", "--no-coastal-denoise", *flags]) == 0
     output = capsys.readouterr().out
-    assert ("| Beta" not in output) is removed
+    country_table = output.split("\n\n", 1)[0]
+    assert ("| Beta" not in country_table) is removed
     if "--no-denoise" not in flags:
         disabled = next(line for line in output.splitlines() if line.startswith("Disabled:"))
         assert ("singletons" in disabled) is not removed

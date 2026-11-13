@@ -182,7 +182,8 @@ def test_cli_default_and_opt_outs_keep_the_input_file_unchanged(tmp_path, monkey
     monkeypatch.setattr(script, 'urlopen', lambda *_args, **_kwargs: pytest.fail('custom boundaries must stay offline'))
     assert script.main([str(source), '--country-data', str(boundaries), '--timeline', *flags]) == 0
     output = capsys.readouterr().out
-    assert any(line.startswith('| Unassigned') for line in output.splitlines()) == unknown_visible
+    country_table = output.split('\n\n', 1)[0]
+    assert any(line.startswith('| Unassigned') for line in country_table.splitlines()) == unknown_visible
     assert source.read_bytes() == original
     assert set(tmp_path.iterdir()) == {source, boundaries}
 

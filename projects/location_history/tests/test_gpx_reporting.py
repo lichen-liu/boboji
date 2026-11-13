@@ -108,8 +108,9 @@ def test_default_report_has_bounded_size_and_conserves_weighted_removal_counts()
     compact = script.format_denoising(report)
     assert "Denoising: on · Input: 9 · Kept: 2 · Removed: 7" in compact
     assert "motion 0 · unassigned 4 · singletons 3 (1 excursion)" in compact
-    assert len(compact.splitlines()) <= 5
-    assert max(map(len, compact.splitlines())) <= 120
+    accounting = compact.split("\n\nRemoved points by country\n", 1)[0]
+    assert len(accounting.splitlines()) <= 5
+    assert max(map(len, accounting.splitlines())) <= 120
     assert "Bounds:" not in compact and "Reference map details" not in compact
     report["coastal_models"] = [(f"Country {i:02}", 100, 500) for i in range(30)]
     report["coastal_effective"] = [(name, 10000) for name, _, _ in report["coastal_models"]]

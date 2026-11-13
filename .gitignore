@@ -24,3 +24,6 @@ location-history.json
 Records.json
 Location History.json
 Semantic Location History/
+
+# Local project runtime directories may also be migration symlinks.
+/projects/*/var

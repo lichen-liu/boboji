@@ -165,7 +165,7 @@ def test_cli_corrects_verified_border_errors_and_can_disable_that_stage(tmp_path
     source.write_text(original)
     assert script.main([str(source), "--timeline", "--no-remove-unassigned", "--no-singleton-denoise"]) == 0
     output = capsys.readouterr().out
-    assert "| Beta" not in output and "Border-map corrections: 1" in output
+    assert "| Beta" not in output and "border 1" in output
     for flag in ["--no-border-denoise", "--no-denoise"]:
         assert script.main([str(source), "--timeline", flag, "--no-remove-unassigned", "--no-singleton-denoise"]) == 0
         assert "| Beta" in capsys.readouterr().out

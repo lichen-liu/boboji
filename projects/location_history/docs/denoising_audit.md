@@ -57,6 +57,15 @@ maximum adjacent gap 60 minutes. These are configurable user policy assumptions,
 not universal physical limits or measured accuracy. A manual country radius
 supersedes the positional radius for both contextual country passes only.
 
+CLI switches, shared thresholds, and explanations are grouped under `Denoising`
+in `--help`. `--denoise` is the default-on master control. Its negative form
+bypasses every stage and restores raw records/order, regardless of individual
+stage enable switches or their position in the command. Optional stages have
+separate default-on controls: `--motion-denoise`, `--border-denoise`,
+`--visit-denoise`, `--coastal-denoise`, and `--remove-unassigned`; each accepts a
+`--no-...` form. Normalization belongs to the enabled pipeline. Disabling one
+stage does not disable the others or exempt an observation from their rules.
+
 ### 1. Canonical observations and epochs
 
 Exact duplicates of coordinate, timestamp, and tracking/nontracking type retain
@@ -85,6 +94,11 @@ Sparse two-ended observations lack bracketing context and remain. Coherent burst
 plausible-speed drift, long gaps, and unresolved competing alternatives may
 remain. Changing GPX segmentation, source IDs, duplicate multiplicity, or input
 ordering cannot change physical eligibility.
+
+`--no-motion-denoise` skips motion-outlier exclusion and reports zero motion
+checks/exclusions with the stage marked disabled. Shared physical bounds remain
+active for country-context inference and unresolved-movement diagnostics. The
+independent final unassigned-removal stage still applies unless disabled.
 
 ### 3. Coordinate-based map evidence
 

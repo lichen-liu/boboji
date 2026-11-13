@@ -50,6 +50,7 @@ def test_help_groups_all_denoising_settings(capsys):
     denoising = help_text.split("\nDenoising:\n", 1)[1]
     for flag in ("--denoise", "--no-denoise", "--motion-denoise", "--no-motion-denoise",
                  "--border-denoise", "--coastal-denoise", "--visit-denoise",
+                 "--singleton-denoise", "--no-singleton-denoise",
                  "--remove-unassigned", "--no-remove-unassigned", "--gps-radius-meters",
                  "--max-speed-kmh", "--max-gap-minutes", "--position-allowance-meters",
                  "--motion-slack-meters", "--explain"):
@@ -63,7 +64,7 @@ def test_api_motion_and_unassigned_stages_are_independent(motion, remove):
     records = samples()
     fixes, report = script.denoise_samples(
         records, script.country_lookup(boundaries()), motion=motion,
-        borders=False, coastal=False, visits=False, remove_unassigned=remove)
+        borders=False, coastal=False, visits=False, remove_unassigned=remove, singletons=False)
     assert report["enabled"] is True and report["motion_enabled"] is motion
     assert report["excluded"] == (2 if motion else 0)
     assert report["unassigned_removed"] == (1 if remove else 0)
@@ -84,7 +85,7 @@ def test_cli_defaults_and_independent_stage_controls(inputs, capsys, motion_flag
     original = source.read_bytes()
     assert script.main([str(source), "--country-data", str(country_data), "--timeline",
                         "--no-border-denoise", "--no-coastal-denoise", "--no-visit-denoise",
-                        *motion_flags, *remove_flags]) == 0
+                        "--no-singleton-denoise", *motion_flags, *remove_flags]) == 0
     output = capsys.readouterr().out
     assert ("| Beta" in output) is not motion
     assert ("| Unassigned" in output) is not remove
@@ -114,7 +115,7 @@ def test_motion_off_leaves_far_unknowns_to_the_separate_final_removal_stage(inpu
 def test_global_off_dominates_explicit_stage_enables_regardless_of_order(inputs, capsys, global_first):
     source, country_data = inputs
     stage_flags = ["--motion-denoise", "--border-denoise", "--coastal-denoise",
-                   "--visit-denoise", "--remove-unassigned"]
+                   "--visit-denoise", "--remove-unassigned", "--singleton-denoise"]
     flags = ["--no-denoise", *stage_flags] if global_first else [*stage_flags, "--no-denoise"]
     assert script.main([str(source), "--country-data", str(country_data), "--timeline", *flags]) == 0
     output = capsys.readouterr().out
@@ -128,7 +129,8 @@ def test_api_global_off_restores_every_raw_record_even_with_all_stage_enables(mo
     records = list(reversed(samples()))
     lookup = script.country_lookup(boundaries())
     fixes, report = script.denoise_samples(records, lookup, enabled=False, motion=motion,
-                                           borders=True, coastal=True, visits=True, remove_unassigned=True)
+                                           borders=True, coastal=True, visits=True,
+                                           remove_unassigned=True, singletons=True)
     assert report == {"enabled": False}
     assert [(f.latitude, f.longitude, f.time, f.country, f.count) for f in fixes] == [
         (lat, lon, time, lookup(lat, lon), 1) for lat, lon, time, _sequence in records]

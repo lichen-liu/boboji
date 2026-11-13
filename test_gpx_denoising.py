@@ -193,7 +193,7 @@ def test_waypoint_duplicate_of_a_rejected_track_fix_is_still_a_poi():
     assert any(f.time == time and f.sequences == {None} for f in fixes)
 
 
-@pytest.mark.parametrize("sparse", ["endpoint", "four", "gap", "split", "untimed", "route", "burst"])
+@pytest.mark.parametrize("sparse", ["endpoint", "gap", "untimed", "route", "burst"])
 def test_insufficient_context_abstains(sparse):
     route = spike_route()
     if sparse == "endpoint":

@@ -541,12 +541,25 @@ def infer_coastal_countries(fixes, lookup, radius_meters, report, reference=None
 
 
 
+def remove_unassigned_fixes(fixes, report):
+    """Final output policy: drop unresolved records without inferring a country."""
+    retained = []
+    for fix in fixes:
+        if fix.country is None:
+            report["unassigned_removed"] += fix.count
+            report["decisions"].append((fix.time, "Unassigned", "Removed", "final unassigned-removal policy", fix.count))
+        else:
+            retained.append(fix)
+    return retained
+
+
 def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
                     max_speed_kmh=DEFAULT_POLICY.max_speed_kmh,
                     max_gap_minutes=DEFAULT_POLICY.max_gap_minutes,
                     motion_slack_meters=DEFAULT_POLICY.position_allowance_meters,
-                    coastal=True, coastal_reference=None, borders=True, visits=True):
-    """Normalize → motion → map adjudication → visit support → coastal context.
+                    coastal=True, coastal_reference=None, borders=True, visits=True,
+                    remove_unassigned=True):
+    """Normalize → motion → map evidence → visit/coast context → output policy.
 
     Every stage uses immutable observation evidence. Only geometry-backed map
     corrections can become evidence for country context; inferred visits and
@@ -571,6 +584,7 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
               "coastal_models": [], "coastal_unavailable": [], "reference_confirmed": 0,
               "coastal_effective": [], "border_corrected": 0, "borders_enabled": borders,
               "visit_inferred": 0, "visits_enabled": visits,
+              "unassigned_removed": 0, "remove_unassigned_enabled": remove_unassigned,
               "map_unavailable": set(),
               "max_inferred_distance_meters": 0, "gps_radius_meters": gps_radius_meters,
               "max_speed_kmh": max_speed_kmh, "max_gap_minutes": max_gap_minutes,
@@ -602,6 +616,10 @@ def denoise_samples(samples, lookup, enabled=True, *, gps_radius_meters=None,
     for left, right in zip(times, times[1:]):
         if policy.gap_ok(left, right) and not any(policy.feasible(a, b) for a in final_epochs[left] for b in final_epochs[right]):
             report["unresolved_motion"].append((left, right))
+    # Diagnose the evidence before filtering so removal cannot hide a retained
+    # contradiction or create a new inference/anchor across the removed gap.
+    if remove_unassigned:
+        retained = remove_unassigned_fixes(retained, report)
     report["decisions"].sort(key=decision_sort_key)
     report["map_unavailable"] = sorted(report["map_unavailable"])
     return retained, report
@@ -644,6 +662,9 @@ def format_denoising(report):
             f"({'enabled' if report['visits_enabled'] else 'disabled'}).\n"
             f"Border-map corrections: {report['border_corrected']:,} "
             f"({'enabled' if report['borders_enabled'] else 'disabled'}).\n"
+            f"Unassigned removal: {'on' if report['remove_unassigned_enabled'] else 'off'} · "
+            f"Removed unassigned GPX points: {report['unassigned_removed']:,}.\n"
+            "Diagnostics below describe evidence before final unassigned removal.\n"
             f"Unresolved simultaneous country alternatives: {report['unresolved_country_epochs']:,} · "
             f"Unresolved movement transitions: {len(report['unresolved_motion']):,}.\n"
             f"Unavailable border references: {', '.join(report['map_unavailable']) or 'none'}.\n"
@@ -757,6 +778,8 @@ def main(argv=None):
                         help="correct border-map disagreements using both countries' reference maps (default: enabled)")
     parser.add_argument("--visit-denoise", action=argparse.BooleanOptionalAction, default=True,
                         help="resolve unconfirmed one-epoch excursions within the position allowance (default: enabled)")
+    parser.add_argument("--remove-unassigned", action=argparse.BooleanOptionalAction, default=True,
+                        help="remove remaining unassigned points after denoising, before grouping (default: enabled)")
     parser.add_argument("--gps-radius-meters", type=float,
                         help="override the radius for contextual country inference (not direct map evidence)")
     parser.add_argument("--max-speed-kmh", type=float, default=DEFAULT_POLICY.max_speed_kmh,
@@ -788,7 +811,8 @@ def main(argv=None):
                                            gps_radius_meters=args.gps_radius_meters, max_speed_kmh=args.max_speed_kmh,
                                            max_gap_minutes=args.max_gap_minutes, motion_slack_meters=args.motion_slack_meters,
                                            coastal=args.coastal_denoise, coastal_reference=reference,
-                                           borders=args.border_denoise, visits=args.visit_denoise)
+                                           borders=args.border_denoise, visits=args.visit_denoise,
+                                           remove_unassigned=args.remove_unassigned)
             labels = ((fix.country, fix.time, fix.count) for fix in fixes)
             output = (format_timeline(*group_timeline_labels(labels)) if args.timeline
                       else format_table(*summarize_labels(labels)))

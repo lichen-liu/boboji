@@ -17,7 +17,7 @@ def reference_maps(country):
 
 def test_return_blips_correct_only_when_both_country_maps_agree():
     records = samples([(.01, -.01), (.01, .003), (.01, .005), (.01, .03), (.01, -.01)])
-    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps)
+    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps, remove_unassigned=False)
     assert [f.country for f in fixes] == [A, A, A, B, A]
     assert [f.raw_country for f in fixes] == [A, B, B, B, A]
     assert report["border_corrected"] == 2 and report["excluded"] == 0
@@ -27,13 +27,13 @@ def test_return_blips_correct_only_when_both_country_maps_agree():
 @pytest.mark.parametrize("spacing", [1, 60, 3600, 86400])
 def test_border_map_correction_is_not_a_short_visit_or_sample_density_rule(spacing):
     records = samples([(.01, -.01), (.01, .003), (.01, .005), (.01, -.01)], seconds=spacing)
-    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps)
+    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps, remove_unassigned=False)
     assert all(f.country == A for f in fixes) and report["border_corrected"] == 2
 
 
 def test_genuine_brief_crossing_supported_by_its_country_reference_is_preserved():
     records = samples([(.01, -.01), (.01, .02), (.01, .021), (.01, .02), (.01, -.01)])
-    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps)
+    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps, remove_unassigned=False)
     assert [f.country for f in fixes] == [A, B, B, B, A]
     assert report["border_corrected"] == report["excluded"] == 0
 
@@ -52,14 +52,14 @@ def test_ambiguous_or_missing_border_evidence_never_rewrites_a_named_country(con
         return reference_maps(country)
     records = samples([(.01, -.01), (.01, .003), (.01, -.01)])
     fixes, report = script.denoise_samples(records, coast(True), coastal=False,
-                                         borders=condition != "disabled", coastal_reference=reference)
+                                         borders=condition != "disabled", coastal_reference=reference, remove_unassigned=False)
     assert [f.country for f in fixes] == [A, B, A]
     assert report["border_corrected"] == 0
 
 
 def test_verified_map_membership_does_not_depend_on_a_return_excursion():
     records = samples([(.01, -.01), (.01, .003), (.01, .005)])
-    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps)
+    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps, remove_unassigned=False)
     assert [f.country for f in fixes] == [A, A, A] and report["border_corrected"] == 2
 
 
@@ -74,7 +74,7 @@ def marker_records():
 def test_impossible_isolated_marker_is_excluded_across_logging_breaks(copies):
     records = marker_records()
     records += [records[2]] * (copies - 1)
-    fixes, report = script.denoise_samples(records, lambda *_: A)
+    fixes, report = script.denoise_samples(records, lambda *_: A, remove_unassigned=False)
     assert report["excluded"] == copies
     assert sum(f.count for f in fixes) + report["excluded"] == len(records)
     assert all(f.time != BASE + timedelta(minutes=2) for f in fixes)
@@ -84,7 +84,7 @@ def test_impossible_isolated_marker_is_excluded_across_logging_breaks(copies):
 def test_a_later_real_trip_to_the_markers_country_is_preserved():
     records = marker_records()
     later = [(30, 30 + i * .001, BASE + timedelta(hours=5, minutes=i), 50) for i in range(13)]
-    fixes, report = script.denoise_samples(records + later, lambda lat, _: B if lat > 20 else A)
+    fixes, report = script.denoise_samples(records + later, lambda lat, _: B if lat > 20 else A, remove_unassigned=False)
     assert report["excluded"] == 1
     assert sum(f.country == B for f in fixes) == 13
 
@@ -93,7 +93,7 @@ def test_an_actual_continuous_track_can_bracket_a_marker_without_an_extra_nearby
     records = [(0, 0, BASE, 10), (30, 30, BASE + timedelta(seconds=8), 20),
                (0, .01, BASE + timedelta(minutes=1), 10),
                (0, .015, BASE + timedelta(minutes=1), 11)]
-    fixes, report = script.denoise_samples(records, lambda *_: A)
+    fixes, report = script.denoise_samples(records, lambda *_: A, remove_unassigned=False)
     assert report["excluded"] == 1 and sum(f.count for f in fixes) == 3
     assert all(f.latitude == 0 for f in fixes)
 
@@ -110,7 +110,7 @@ def test_unsupported_isolated_marker_cases_remain_unresolved(context):
     else:
         lat, lon, time, _ = records[2]
         records[2] = lat, lon, time, None
-    fixes, report = script.denoise_samples(records, lambda *_: A)
+    fixes, report = script.denoise_samples(records, lambda *_: A, remove_unassigned=False)
     assert report["excluded"] == 0 and sum(f.count for f in fixes) == len(records)
 
 
@@ -119,7 +119,7 @@ def test_unsupported_isolated_marker_cases_remain_unresolved(context):
 def test_normal_motion_logged_as_isolated_segments_is_preserved(mode, cadence):
     records = [(lat, lon, time, i) for i, (lat, lon, time, _) in enumerate(
         movement(mode, 65, cadence, "correlated", 421))]
-    fixes, report = script.denoise_samples(records, lambda *_: A)
+    fixes, report = script.denoise_samples(records, lambda *_: A, remove_unassigned=False)
     assert report["excluded"] == 0 and sum(f.count for f in fixes) == len(records)
 
 
@@ -127,23 +127,23 @@ def test_position_allowance_also_controls_automatic_coastal_country_context():
     records = samples([(.01, -.001), (.01, .05), (.01, .07), (.01, -.001)])
     def reference(_country):
         return coast()
-    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference)
+    fixes, report = script.denoise_samples(records, coast(), coastal_reference=reference, remove_unassigned=False)
     assert all(f.country == A for f in fixes)
     assert report["coastal_models"] == []
     assert report["coastal_effective"] == [("Alpha", 10000)]
-    tight, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=1000)
+    tight, report = script.denoise_samples(records, coast(), coastal_reference=reference, motion_slack_meters=1000, remove_unassigned=False)
     assert [f.country for f in tight] == [A, None, None, A]
 
 
 def test_manual_coastal_radius_takes_precedence_over_the_position_allowance():
     records = samples([(.01, -.001), (.01, .05), (.01, -.001)])
-    fixes, report = script.denoise_samples(records, coast(), gps_radius_meters=1000)
+    fixes, report = script.denoise_samples(records, coast(), gps_radius_meters=1000, remove_unassigned=False)
     assert [f.country for f in fixes] == [A, None, A]
 
 
 def test_open_water_beyond_the_automatic_ceiling_is_not_merged():
     records = samples([(.01, -.001), (.01, .2), (.01, -.001)])
-    fixes, report = script.denoise_samples(records, coast(), coastal_reference=lambda _: coast())
+    fixes, report = script.denoise_samples(records, coast(), coastal_reference=lambda _: coast(), remove_unassigned=False)
     assert [f.country for f in fixes] == [A, None, A] and report["inferred"] == 0
 
 
@@ -161,10 +161,10 @@ def test_cli_corrects_verified_border_errors_and_can_disable_that_stage(tmp_path
                      for lat, lon, time, _ in samples([(.01, -.01), (.01, .003), (.01, -.01)]))
     original = '<gpx><trk><trkseg>' + points + '</trkseg></trk></gpx>'
     source.write_text(original)
-    assert script.main([str(source), "--timeline"]) == 0
+    assert script.main([str(source), "--timeline", "--no-remove-unassigned"]) == 0
     output = capsys.readouterr().out
     assert "| Beta" not in output and "Border-map corrections: 1" in output
     for flag in ["--no-border-denoise", "--no-denoise"]:
-        assert script.main([str(source), "--timeline", flag]) == 0
+        assert script.main([str(source), "--timeline", flag, "--no-remove-unassigned"]) == 0
         assert "| Beta" in capsys.readouterr().out
     assert source.read_text() == original

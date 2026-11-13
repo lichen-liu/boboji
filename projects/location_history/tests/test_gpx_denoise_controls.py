@@ -89,8 +89,9 @@ def test_cli_defaults_and_independent_stage_controls(inputs, capsys, motion_flag
                         "--no-border-denoise", "--no-coastal-denoise", "--no-visit-denoise",
                         "--no-singleton-denoise", *motion_flags, *remove_flags]) == 0
     output = capsys.readouterr().out
-    assert ("| Beta" in output) is not motion
-    assert ("| Unassigned" in output) is not remove
+    country_table = output.split("\n\n", 1)[0]
+    assert ("| Beta" in country_table) is not motion
+    assert ("| Unassigned" in country_table) is not remove
     assert "Denoising: on" in output
     assert f"Removed points: motion {2 if motion else 0}" in output
     assert f"unassigned {1 if remove else 0}" in output

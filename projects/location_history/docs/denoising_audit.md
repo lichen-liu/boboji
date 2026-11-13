@@ -1,4 +1,4 @@
-# Denoising audit and QA — 2026-11-12
+# Denoising audit and QA — 2026-11-13
 
 The prior implementation failed consistency checks. The replacement is a
 standalone, standard-library rule pipeline with a single immutable policy,
@@ -62,7 +62,8 @@ in `--help`. `--denoise` is the default-on master control. Its negative form
 bypasses every stage and restores raw records/order, regardless of individual
 stage enable switches or their position in the command. Optional stages have
 separate default-on controls: `--motion-denoise`, `--border-denoise`,
-`--visit-denoise`, `--coastal-denoise`, and `--remove-unassigned`; each accepts a
+`--visit-denoise`, `--coastal-denoise`, `--remove-unassigned`, and
+`--singleton-denoise`; each accepts a
 `--no-...` form. Normalization belongs to the enabled pipeline. Disabling one
 stage does not disable the others or exempt an observation from their rules.
 
@@ -135,6 +136,8 @@ from a blip under this allowance. The explicit display policy favors continuity
 in that case. It does not diagnose GPS error or disprove a real visit. Genuine
 multi-epoch brief visits and observations outside the allowance remain visible.
 `--no-visit-denoise` and `--no-denoise` expose the underlying evidence.
+These guarantees describe inference; the independently controlled final
+singleton policy can filter a one-timestamp excursion without relabeling it.
 
 ### 5. Coastal context
 
@@ -154,7 +157,7 @@ inference; it is not a single monotonic noise-removal aggressiveness setting.
 ### 6. Explicit final unassigned removal
 
 `--remove-unassigned` is enabled by default after inference and diagnostics,
-before summary/timeline grouping. It removes only records whose **final**
+before singleton filtering and summary/timeline grouping. It removes only records whose **final**
 country is `None`, including untimed/nontracking observations and weighted
 copies. Raw-unassigned records resolved to a named country survive. This is an
 explicit presentation policy and never declares the discarded positions to be
@@ -163,12 +166,50 @@ GPS errors or changes the input GPX.
 `--no-remove-unassigned` retains unresolved observations. Global `--no-denoise`
 bypasses every pass, including removal, and restores raw records/order. Earlier
 stage opt-outs do not disable this independent final policy. Motion exclusions
-and unassigned removals are disjoint; represented + motion-excluded +
-unassigned-removed equals input count. All-removed input is a successful empty
-analysis. Diagnostics remain based on evidence before removal; no inference is
+and unassigned removals are disjoint. All-removed input is a successful empty
+analysis. Diagnostics remain based on evidence before both output filters; no inference is
 rerun and no new anchors are manufactured. Grouping the retained points can
 join the same country across removed gaps; recorded spans still do not imply
 continuous presence.
+
+### 7. Explicit singleton-excursion filtering
+
+`--singleton-denoise` is a default-on presentation policy with an independent
+`--no-singleton-denoise` opt-out. It applies in both views to all timed records,
+including routes and POIs. Freeze the view remaining after the configured
+unassigned-removal stage. This declared order means removing unknowns can expose
+an A → X → A pattern; retained unknowns are barriers. No inference runs after
+either output filter.
+
+Group observations into chronological epochs before evaluating context. At an
+interior epoch, the previous and next distinct timestamps must each have
+exactly one label, the same named country A. The middle epoch must contain no
+unassigned labels. Propose every middle-epoch named alternative X other than A,
+including simultaneous `{A, X}` or `{A, X, Y}` cases. X cannot continue into
+either neighboring epoch. Multiplicity and XML ordering never add timestamp
+support or decide which simultaneous alternative comes first.
+
+Generate all proposals against that frozen snapshot. Abstain when either
+supporting neighbor epoch is itself proposed for removal. This preserves
+competing A → B → A → B → A proposals; independent A → X → A → Y → A proposals
+can be applied together when their anchors are not proposed. Do not iterate the
+filter, relabel removed points, or use removals to manufacture further support.
+First/last timestamps, untimed points, adjacent multi-timestamp country visits,
+ambiguous neighboring epochs, and retained unassigned barriers survive.
+
+This stage intentionally has no physical gap, speed, or polygon-distance gate.
+One timestamp alone cannot establish actual visit duration, and a sparse real
+visit can be filtered even across multi-day gaps. The converter emits only the
+start of a semantic Google visit and duplicates isolated points for Fog of
+World; a zero GPX span can therefore represent a nonzero source visit interval.
+This policy controls presentation and does not diagnose GPS error.
+
+Report removed GPX multiplicities and distinct country/timestamp excursions
+separately. Removal sets are disjoint: represented + motion-excluded +
+unassigned-removed + singleton-removed equals input count. Map/inference counters
+describe earlier processing and may include subsequently removed points.
+Explanations preserve raw labels and identify the final removed country and
+surrounding context, including map-refined points.
 
 ## QA evidence
 
@@ -195,11 +236,16 @@ Checks cover:
 - Alternating trajectory conflicts, uncertain epochs, and no cascading anchors.
 - CLI behavior, count conservation, raw restoration, offline caches/fallback,
   standalone copying, converter behavior, and original-data pruner previews.
+- Singleton policy controls, all timed point types, endpoint/untimed protection,
+  equal-time alternatives, duplicate/source-ID invariance, multi-epoch visits,
+  competing proposals, declared unassigned-filter order, long-gap behavior,
+  raw-label provenance, and disjoint removal accounting across all stages.
 
 Full local-export acceptance additionally checks both reported singleton
 regressions after map adjudication, the earlier impossible isolated marker,
 genuine multi-day trips, a supported multi-epoch border crossing, coastal
-continuity, represented-plus-motion-excluded-plus-unassigned-removed count conservation, and input SHA-256.
+continuity, represented-plus-motion-excluded-plus-unassigned-removed-plus-singleton-removed
+count conservation, and input SHA-256.
 Private dates, coordinates, and export hashes are intentionally excluded here.
 The full output is checked for unresolved anomalies as well as corrected cases.
 

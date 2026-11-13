@@ -38,6 +38,7 @@ python3 gpx_countries.py history.gpx --timeline --no-coastal-denoise
 python3 gpx_countries.py history.gpx --timeline --no-motion-denoise --no-remove-unassigned
 python3 gpx_countries.py history.gpx --timeline --gps-radius-meters 1000
 python3 gpx_countries.py history.gpx --timeline --no-remove-unassigned
+python3 gpx_countries.py history.gpx --timeline --no-singleton-denoise
 python3 gpx_countries.py history.gpx --timeline --no-denoise
 python3 gpx_countries.py history.gpx > var/visited_countries.md
 ```
@@ -45,12 +46,17 @@ python3 gpx_countries.py history.gpx > var/visited_countries.md
 The default view and `--summary` show one row per country in alphabetical order.
 `--timeline` sorts observations by UTC timestamp, then groups consecutive
 countries into rows with begin, end, recorded span, and point count. Returns
-start new rows: Canada → Peru → Canada produces three rows. A final
+start new rows after the filters below have run. An
 `--remove-unassigned` stage is enabled by default: remaining unresolved records
 are removed **before** country grouping. `--no-remove-unassigned` keeps them
 visible and lets them split periods. This is an explicit output policy, not a
 claim that every unmatched point is noise. Untimed retained points are grouped
 by country at the end.
+The default-on `--singleton-denoise` stage then filters one-timestamp excursions
+such as Canada → US → Canada. `--no-singleton-denoise` keeps them visible. A
+multi-timestamp visit, first/last epoch, or ambiguous surrounding context is
+preserved by this stage. These are output policies applied before grouping in
+both views; they do not change the GPX.
 Spans run from the first to last recorded point in each period and can include
 sampling gaps. The timeline flag replaces `--chronological`.
 Equal-time conflicts retain input order; rows do not resolve which position is true.
@@ -67,12 +73,13 @@ by default in both views:
 | `--no-visit-denoise` | Single-epoch visit-context inference. |
 | `--no-coastal-denoise` | Reference refinement and contextual inference for raw-unassigned points. |
 | `--no-remove-unassigned` | Final removal of still-unassigned records. |
+| `--no-singleton-denoise` | Final filtering of single-timestamp country excursions. |
 
 Each control also has its positive form, such as `--motion-denoise` or
 `--remove-unassigned`. Individual stage switches apply only with the master
 enabled: `--no-denoise` bypasses every stage even if an individual stage is
 explicitly enabled later in the command. For example, `--no-motion-denoise
---no-remove-unassigned` keeps those records while leaving country inference
+--no-remove-unassigned --no-singleton-denoise` keeps those records while leaving country inference
 active. Normalization is part of the enabled pipeline, not an optional filter.
 
 One policy object supplies
@@ -114,15 +121,34 @@ The standalone script applies these passes in order:
    unassigned, including timed/untimed tracks, routes, and POIs. Points resolved
    to a country by earlier passes are kept. This stage neither guesses a
    country nor reruns inference after removal.
+7. **Singleton excursions:** freeze the remaining timed view, including tracks,
+   routes, and POIs. At an interior timestamp, require the immediately preceding
+   and following **distinct timestamps** to each support the same single named
+   country A. Filter other named countries X at the middle timestamp, including
+   simultaneous A/X alternatives. Duplicate copies do not add time support.
+   Unassigned labels at any of these epochs are barriers. Generate all proposals
+   before removal; abstain when a supporting neighbor epoch is itself proposed
+   for removal. No cascading, relabeling, or inference rerun occurs. Endpoints,
+   untimed points, and consecutive multi-timestamp visits stay intact.
 
 Turns, stops, detours, changing transport, short visits, and water travel are
 normal. The visit rule is an explicit uncertainty policy: a genuine one-sample
 border visit inside the allowance is indistinguishable from a GPS blip and may
-be smoothed. Coherent visits with multiple timestamps and deep-interior
-singletons are preserved. The motion rule assumes one traveler's history;
+be smoothed. The inference passes preserve coherent visits with multiple
+timestamps and deep-interior singletons. The final singleton policy can still
+filter a one-timestamp excursion regardless of distance or elapsed gap. The motion rule assumes one traveler's history;
 competing trajectories remain unresolved. Planned routes and POIs are excluded
 from motion and visit inference. Their coordinate-based map refinement remains
 available.
+
+Singleton filtering is an explicit presentation policy rather than a GPS-error
+test. It uses timestamp support and return context, not the speed, radius, or
+one-hour inference limit. A sparse real visit can be removed. In particular,
+the converter represents a Google semantic visit by its start time, so zero
+GPX span does not imply zero source-visit duration. Use
+`--no-singleton-denoise` to retain those observations. If unassigned removal is
+enabled, those points are filtered before the singleton snapshot; with
+`--no-remove-unassigned`, retained unknowns can prevent an A → X → A match.
 
 `--gps-radius-meters N` overrides the radius for **both visit and coastal context**;
 it does not change physical speed checks or independent map evidence. In manual
@@ -140,9 +166,11 @@ Custom `--country-data` stays offline and does not fetch
 reference maps; an explicit manual radius remains available for local data.
 
 The footer separates motion exclusions, map corrections, visit/coastal
-inferences, and final unassigned removals. Corrections can overlap, but removal
-counts are disjoint: represented + motion-excluded + unassigned-removed equals
-input records. Diagnostics describe the evidence before the final removal step. `--explain` lists decisions and retained one-way movement
+inferences, unassigned removals, and singleton removals. Corrections can overlap,
+but removal counts are disjoint: represented + motion-excluded +
+unassigned-removed + singleton-removed equals input records. Singleton excursion
+counts represent distinct removed country/timestamp pairs. Diagnostics describe
+the evidence before both final output filters. `--explain` lists decisions and retained one-way movement
 contradictions. Unresolved simultaneous countries are reported as alternatives;
 row order at an identical timestamp does not establish travel. An impossible
 one-way transition alone cannot identify which endpoint or timestamp is wrong.

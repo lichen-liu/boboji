@@ -17,7 +17,8 @@ def reference_maps(country):
 
 def test_return_blips_correct_only_when_both_country_maps_agree():
     records = samples([(.01, -.01), (.01, .003), (.01, .005), (.01, .03), (.01, -.01)])
-    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps, remove_unassigned=False)
+    fixes, report = script.denoise_samples(records, coast(True), coastal_reference=reference_maps,
+                                         remove_unassigned=False, singletons=False)
     assert [f.country for f in fixes] == [A, A, A, B, A]
     assert [f.raw_country for f in fixes] == [A, B, B, B, A]
     assert report["border_corrected"] == 2 and report["excluded"] == 0
@@ -52,7 +53,8 @@ def test_ambiguous_or_missing_border_evidence_never_rewrites_a_named_country(con
         return reference_maps(country)
     records = samples([(.01, -.01), (.01, .003), (.01, -.01)])
     fixes, report = script.denoise_samples(records, coast(True), coastal=False,
-                                         borders=condition != "disabled", coastal_reference=reference, remove_unassigned=False)
+                                         borders=condition != "disabled", coastal_reference=reference,
+                                         remove_unassigned=False, singletons=False)
     assert [f.country for f in fixes] == [A, B, A]
     assert report["border_corrected"] == 0
 
@@ -161,10 +163,10 @@ def test_cli_corrects_verified_border_errors_and_can_disable_that_stage(tmp_path
                      for lat, lon, time, _ in samples([(.01, -.01), (.01, .003), (.01, -.01)]))
     original = '<gpx><trk><trkseg>' + points + '</trkseg></trk></gpx>'
     source.write_text(original)
-    assert script.main([str(source), "--timeline", "--no-remove-unassigned"]) == 0
+    assert script.main([str(source), "--timeline", "--no-remove-unassigned", "--no-singleton-denoise"]) == 0
     output = capsys.readouterr().out
     assert "| Beta" not in output and "Border-map corrections: 1" in output
     for flag in ["--no-border-denoise", "--no-denoise"]:
-        assert script.main([str(source), "--timeline", flag, "--no-remove-unassigned"]) == 0
+        assert script.main([str(source), "--timeline", flag, "--no-remove-unassigned", "--no-singleton-denoise"]) == 0
         assert "| Beta" in capsys.readouterr().out
     assert source.read_text() == original

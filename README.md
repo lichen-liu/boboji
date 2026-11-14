@@ -69,3 +69,7 @@ The [BoboWatch migration design](projects/bobowatch/docs/monorepo-migration.md)
 and [provenance manifest](projects/bobowatch/docs/migration.json) record the source
 history, compatibility dependencies, rollout, and archival gates. Flightrepo's
 source and real database are a separate later migration.
+
+The [history record and commit map](.github/history/README.md) describe the
+chronological reconstruction, retained release references, and commands for
+updating older clones. Main has a single parent chain with no merge commits.

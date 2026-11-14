@@ -83,9 +83,11 @@ sender suspends delivery; enabling an app initially started with monitoring off
 requires a restart. Token contents are read on each delivery. HTTP is permitted
 only on loopback; other destinations require HTTPS.
 
-The public repository can be a pinned Git submodule. Consumers package only the
-standard-library adapter modules into their installed release; Waitress, the
-monitoring SQL database and dashboard are not dependencies of the serving app.
+Standalone consumers install the pinned [adapter distribution](adapter-release.md)
+from Boboji. Legacy submodule pins remain available in the compatibility archive.
+Waitress, the monitoring SQL database, and dashboard are not dependencies of the
+serving app. New consumer releases must remove previously embedded adapter files
+when switching to the distribution so only one package owns the imports.
 
 ## Runtime rollout
 

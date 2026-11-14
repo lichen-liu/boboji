@@ -1,8 +1,8 @@
 # BoboWatch project rules
 
-- This directory currently contains a proposed migration design, not an imported
-  application. See `docs/monorepo-migration.md` for the evidence and rollout gates.
-- Keep eventual code, tests, examples, installation, deployment, and documentation
+- See `docs/monorepo-migration.md` and `docs/migration.json` for source provenance
+  and the rollout gates. The former standalone repository becomes a compatibility archive.
+- Keep code, tests, examples, installation, deployment, and documentation
   here. Retain the `bobowatch` Python import name and Python 3.11+ requirement.
 - Preserve the existing unittest, plain Node, and fictional Playwright checks.
   Keep project environments and dependencies separate from other projects.
@@ -14,3 +14,6 @@
 - Shared GitHub policy belongs at the repository root. Do not activate a second
   copy of the old repository's settings or change branch protections or triggers
   as part of the migration.
+- Build the standard-library adapter only from its canonical module allowlist
+  through `scripts/build_adapter.py`; verify both the isolated wheel and sdist.
+  Standalone consumers pin the versioned release artifact and SHA-256.

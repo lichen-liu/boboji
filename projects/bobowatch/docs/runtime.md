@@ -3,12 +3,12 @@
 Use Python 3.11+ as your normal macOS user, without sudo. The only application
 runtime dependency is pinned Waitress; the adapter is standard-library Python.
 The installer requires internet access for its virtual environment dependency.
-Run the following commands from the BoboWatch checkout after merging the runtime PR.
+Run the following commands from `projects/bobowatch` in the Boboji checkout.
 
 ## Install, then start when wanted
 
 ```sh
-cd ~/p/bobowatch
+cd ~/p/boboji/projects/bobowatch
 git switch main
 git pull --ff-only
 python3 installation/install.py
@@ -151,7 +151,7 @@ create future observations. No SQL migration or new runtime dependency is needed
 ## One-command deployment
 
 ```sh
-cd ~/p/bobowatch
+cd ~/p/boboji/projects/bobowatch
 ./deployment/watch deploy
 ```
 
@@ -171,7 +171,7 @@ first be stopped in its terminal. Update the checkout separately with `git pull`
 ## Reinstall or update
 
 ```sh
-cd ~/p/bobowatch
+cd ~/p/boboji/projects/bobowatch
 ./deployment/watch stop
 git switch main
 git pull --ff-only

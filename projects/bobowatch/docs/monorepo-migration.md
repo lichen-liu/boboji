@@ -6,6 +6,14 @@ tools. The BoboWatch source repository is archived. The design below records
 the accepted approach; final provenance and validation are in
 [`migration.json`](migration.json).
 
+History update on 2026-11-14: the owner subsequently chose a chronological
+reconstruction with no merge commits. The initial replay described below
+preserved author dates but GitHub's rebase merge replaced committer dates and
+appended October commits after November work. The [shared history record](../../../.github/history/README.md)
+and commit map supersede that initial history layout. Both original timestamps
+are now preserved, with reconstructed parents and new commit IDs; the original
+release references and archived repository remain available.
+
 ## Executed result
 
 - [Boboji import PR](https://github.com/lichen-liu/boboji/pull/22) was rebase-merged.

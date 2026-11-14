@@ -28,5 +28,8 @@ renames, and consumer dependencies, and must retain a failing required gate
 when an expected check does not pass. Keep test data synthetic and temporary.
 
 Merge ordinary PRs with squash or rebase after all checks pass on the final,
-up-to-date head. The history-import PR must use rebase to retain its original
-source commit sequence. No protection bypasses or force pushes to `main`.
+up-to-date head. Do not force-push `main` or bypass protections in ordinary work.
+The owner-requested chronological reconstruction is recorded with its one-time
+publication procedure and commit map in [repository history](history/README.md).
+GitHub rebase merges preserve author dates but replace committer dates, so they
+must not be used to publish a reconstruction that promises both original dates.

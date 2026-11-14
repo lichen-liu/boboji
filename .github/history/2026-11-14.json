@@ -1,0 +1,431 @@
+{
+  "schema": 1,
+  "operation": "chronological_linear_reconstruction",
+  "requested_on": "2026-11-14",
+  "previous_main": "386955abb98e8267a292a3c53ddcc29c44d87d2f",
+  "previous_main_archive_tag": "archive/boboji-main-before-chronology-2026-11-14",
+  "reconstructed_head_before_audit": "ce932b0d5e552841faf4312e89f875b96d423e60",
+  "reconstructed_tree_before_audit": "9bf1038e73d240506239ccd8990e48d180f0be04",
+  "source_commits": 48,
+  "merge_commits": 0,
+  "author_and_committer_headers_preserved": true,
+  "committer_dates_nondecreasing": true,
+  "parent_chain": "reconstructed; source order retained; cross-project ancestry is synthetic",
+  "original_signatures": "retained only on original objects in archives; not copied to changed commits",
+  "commits": [
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "43771f08c96b40856f3b113ec1a7558dbb7220e0",
+      "rewritten": "f5fac7783a48db84163d7eb66cac4712d9143eb1",
+      "tree": "f70bd80bfa171f04ef6bce613df449500c5952da",
+      "author": "author lichen <liulichen112233@gmail.com> 1792375387 -0400",
+      "committer": "committer lichen <liulichen112233@gmail.com> 1792375387 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "05ffe553de491f93801986a7bab2dc09757373fc",
+      "rewritten": "d3e107d10cb34c92a4c3ee589aaa140fc91755c3",
+      "tree": "6d8970ead94ca35c36e360214ab05508069e798f",
+      "author": "author lichen <liulichen112233@gmail.com> 1792375388 -0400",
+      "committer": "committer lichen <liulichen112233@gmail.com> 1792375388 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "373d76b8550acb6e15eee1f37464e8463ca181ed",
+      "rewritten": "6e3ee19be77b007148a58e8e42c70f7fb9069990",
+      "tree": "e45b1d60e1e0b14c03987809863fda8c28c53a90",
+      "author": "author lichen <liulichen112233@gmail.com> 1792375388 -0400",
+      "committer": "committer lichen <liulichen112233@gmail.com> 1792375388 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "b1ca9251d75eb74696d8bb601a4c06aedfb899d2",
+      "rewritten": "82307e23e506b83eb47bb9c30781c7fff7fbbb12",
+      "tree": "46f76795ee2e3b0c04083d93c4c94e0e55040c09",
+      "author": "author lichen <liulichen112233@gmail.com> 1792375388 -0400",
+      "committer": "committer lichen <liulichen112233@gmail.com> 1792375388 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "6462e6ffaab532f29c212729d20ff2a225d4ae6f",
+      "rewritten": "cc5ce3f30e7c537295bfaf1c7d21a9fb02cbf7f3",
+      "tree": "c0c4a71cf368932b95df864aa86b15d5ff9f17d7",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1792741267 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1792741267 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "eb891f340a190aa27320926779fb93c55c73bc12",
+      "rewritten": "75418a6e30a7d4b26e9aee4997261631b465e1bc",
+      "tree": "c1a7911f368ae7e7350159bfced2f01faaf50eb8",
+      "author": "author lichen <liulichen112233@gmail.com> 1792743373 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792786156 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "708b2e1f90e5b3d68e4abfa5998c82b3f12456ec",
+      "rewritten": "d0691e980b8c9218d8d2b98856f0f9be59508d57",
+      "tree": "ae04e44c72b91a5ecaab1604f79bd3f180d50efa",
+      "author": "author lichen <liulichen112233@gmail.com> 1792743374 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792786156 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "e967bfa3eda5379b21b743aad20489292bffda6b",
+      "rewritten": "ea2bfbf56d858a8d3090553d7e42fa762305c11d",
+      "tree": "d7e1c56289b8271dbb638215255df4b112a9b6b6",
+      "author": "author lichen <liulichen112233@gmail.com> 1792743374 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792786156 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "f4b9bd77da64a24527dd205425b113ae11cbf639",
+      "rewritten": "40b0a0317fea15cc852ba2c2becd3b2d4d98280e",
+      "tree": "03afcfffc80391d204462cfb17bb279d159f9377",
+      "author": "author lichen <liulichen112233@gmail.com> 1792743713 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792786156 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "d4e794a7a4ca209b1778f9c8ff7c62a5ca4995e8",
+      "rewritten": "efc04251bed701685250903fb5c06377c4748452",
+      "tree": "2d57842702621d7610d07a6a1ebb00a140492c2e",
+      "author": "author lichen <liulichen112233@gmail.com> 1792743758 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792786156 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "bb812668a13f1a1692dac425cf054e2ad02a9cf8",
+      "rewritten": "d600bba18a016e5181f0d4d50f865c99c29e357d",
+      "tree": "103b1fdeb9ee08c56c01624f698ad10f9f9abba5",
+      "author": "author lichen <liulichen112233@gmail.com> 1792787421 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792788559 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "48ae2fa48960aa2995af096e585fa34f28483cea",
+      "rewritten": "7fbeaa6cf8ff15cd6a5bac00057e56b406fb351d",
+      "tree": "5248b2f0db3faea40f190d8a128b878cb5fea3e2",
+      "author": "author lichen <liulichen112233@gmail.com> 1792793560 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792793760 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "81a937ee361d3fd02f43154ee4f3a8e078d16c63",
+      "rewritten": "17c610c5a472fa7a374dd198406e09fdb0a3b526",
+      "tree": "c6a50752c2e7f8b2802aedeea37d8c97147015c9",
+      "author": "author lichen <liulichen112233@gmail.com> 1792793560 -0400",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1792793760 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "7a172411f3ec23fb27151724ca14236e8c999ee7",
+      "rewritten": "e3a299f438a3567bd088c623f8d9be4522923127",
+      "tree": "e5b98a67ef5dc57bb7a0269d2c7b108a52e14f10",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1792811212 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1792811212 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "a0faeb64f13d7c40410de60d8e0e65009d86bdb0",
+      "rewritten": "35ffbf08a4bf151977ea91468893f67b001db02e",
+      "tree": "d8e740032455d8c6e75ba70be538ce10519314ae",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1792815876 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1792815876 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "a55c24f3a403021a52fa17176c21ef1ee36c817e",
+      "rewritten": "71f990627c5cfb9a7ebe6b2324e64c7a84cb409a",
+      "tree": "0f15eb864eb6985d91fa078eadf799e2a503f0b2",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1792816067 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1792816067 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "d6eb3167aabf41ad00b06e5e478f2b255d195fc3",
+      "rewritten": "098193cbf09ad80ea729af17792da7f18acaba41",
+      "tree": "526300193af61745ce0f2413b45c5fba2d742c72",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1792897917 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1792897917 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "2660037b46329718c9c439ee0e975c214642ae35",
+      "rewritten": "0c1e02d1c371038a02226b3520b06d8143c7d73b",
+      "tree": "94bbda9e4bdc3f1c174ce118890456e9605f6ebd",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1793167911 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1793167911 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "0d77effe168508c007f69b5dcbb64fa4b6403a6a",
+      "rewritten": "8a8c129b3a0279973b03787bce6c3abba01e737e",
+      "tree": "a8e76e9a300774f811e4d930eaf0286c9c79da7d",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1793223672 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1793223672 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "95166b612df904e897a2d23942db4be981863d74",
+      "rewritten": "111c26340048d41b668d9a7a32e604b495a692e3",
+      "tree": "8761d83f1803243f998e733c272d8bdae48d4895",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1793237396 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1793237396 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "ab3626346e954997f3956bdd1bc4858027c41bcb",
+      "rewritten": "1556809daf07ee18b63b7e2524b169625286adc1",
+      "tree": "a813c1b06935ab935276e7a8e32bb5502ebb6bd2",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1793255359 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1793255359 -0400"
+    },
+    {
+      "repository": "lichen-liu/bobowatch",
+      "source": "d66c9d311e40be80bc8c431c186cf7edd944ff2c",
+      "rewritten": "07b1f9bb7c5e8706532d082edc8bfc0c72a1bd73",
+      "tree": "7ae4001e6be5f61452ac2a8b86ef19b97079d644",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1793319261 -0400",
+      "committer": "committer GitHub <noreply@github.com> 1793319261 -0400"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "ed7912e26d606d39643379718c189b3d70a51a22",
+      "rewritten": "68a5ef13193369c73c32b9a1d8d4604415f39f8b",
+      "tree": "bf275c8b27bcdf38f0f612383646edcbfb1bfc12",
+      "author": "author lichen <liulichen112233@gmail.com> 1794448602 -0500",
+      "committer": "committer lichen <liulichen112233@gmail.com> 1794448602 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "6afd39f3b59cee2cb7d134137a86d9e0f2334975",
+      "rewritten": "4ae3a8592fbd2e0f71bae355cd399bcdaaae12be",
+      "tree": "96bc76453d9f27b4b68131ac6d734d76ebc21077",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794452170 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794452170 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "182c26b885aaa0d0db716edc23d7b52b8f179d00",
+      "rewritten": "484eb4925315b0123c73a155863f3f41132df310",
+      "tree": "01825187c1e950411e4cb5b5377c802eac3957ca",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794454813 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794454813 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "7e4823248b64fd3c311e5e44014c26d115a7c1c4",
+      "rewritten": "d189fe21d524d7a80d8033454fa17e518625955b",
+      "tree": "02097709f4f3146c2b3e05fc023daf770f817a1d",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794467210 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794467210 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "d1b774175952bccb954c4148bce602d2a0a26a11",
+      "rewritten": "b32453985d18570da83510a3bd1a0937872d833c",
+      "tree": "97547953800588de9d373074c733edcd7af2766c",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794469244 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794469244 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "ece99654b4c379a1bfaf458f2ecfee038fa71cea",
+      "rewritten": "343be8ee7a7eaf6734defd66ae695c381a121cc1",
+      "tree": "42b5cf1f403323be9481388f7b7b78c61130a8b8",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794471884 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794471884 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "71674f9f708f5ac0d2ced9d8a82e256f4a1b2eee",
+      "rewritten": "ce7b9f03188eb0e10611b8a71415b66f2189591b",
+      "tree": "15cbf396d126fe16e385bbeb8377cb696b1e1950",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794473439 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794473439 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "466d069e3c4833b2f794c73f3b4c81898829eb85",
+      "rewritten": "74edef398c6e13865cc1cea6900a5c219a37090f",
+      "tree": "7d453dfe5e14574f8fb2bc2e44b5aac52f7e47be",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794497643 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794497643 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "b1026647cebbb25fc8398cac4c41bab434c3cf79",
+      "rewritten": "05ca2d020e0ba8653478ebab46f4dfce21ee1a13",
+      "tree": "a289c049e3d07e9110931cea64880edf6ae8540a",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794499946 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794499946 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "0a3c8a1a238a1e9e13aa3101eb70952da95f193d",
+      "rewritten": "e1079bb68a678c81dda1bde08dcfcba31f93b793",
+      "tree": "c900d91a5d185f543209c08a0eee398d58400155",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794504718 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794504718 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "fb9c05cbb5ef30b22c800c396e33b677fcadc225",
+      "rewritten": "9237144b805aa528afbcbf43e5e4c485ccbdb606",
+      "tree": "666e9348c33e417b311c399dd7f31e569cf7d3c2",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794507552 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794507552 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "a41e0699e16ff79112423b737b05fafb9b116196",
+      "rewritten": "702889f68858e789998630698befe59d6275da81",
+      "tree": "8cdbd4452970e246a9602d0d626240ccf2cb0e3f",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794513343 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794513343 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "df7a96df8a8648910eb3c52f54849ea23fc873ac",
+      "rewritten": "188739ba7e2a47d81188ae581ce3b549f999cf40",
+      "tree": "66570ff3d2cd76228363fcf29e04e9ac41e267ff",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794514906 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794514906 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "211e81aaf4289783273f5806175fd30fca3e7e6f",
+      "rewritten": "b0aba33793d50d2b6696f895287d9e7f5c814371",
+      "tree": "de36a62cdcee8ecc237d0d7e1c888b5a2b65785c",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794521592 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794521592 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "f8e4a4c405060d5e241d3891933114794050af7e",
+      "rewritten": "d3be6681c00d4ef69b98b645ceb579a62968c487",
+      "tree": "f42c009df82ff8bd655c1f08d9eb529bb86ae628",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794524075 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794524075 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "52a8bcc0b6473a537c82866570429db6b44e7353",
+      "rewritten": "35e481a47991114cee7af912cc3512c4876eb279",
+      "tree": "6f8b9bdf1fe7471ff9c4e5fc71eeb58393f2c757",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794545437 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794545437 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "6f2ba90a5728f8bc53e938a344ee80f5ee80e022",
+      "rewritten": "2974d1ad94fbaed5aa4e769aca31c3df55c6284c",
+      "tree": "c9c4cf461dbcfc7382821a4483eae3c19b207726",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794583004 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794583004 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "3a77321057a079f786214e0d570f75f43f425cb7",
+      "rewritten": "f8ece0ddb99092a687ddcbd0b349dd9487d7251e",
+      "tree": "09cd1f0759cd0e9b63bd000bf57239c432b3afc0",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794583921 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794583921 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "f4c7df7a0a7a9ce07b22e76afdf77bea75f3d5d1",
+      "rewritten": "504eae0b66f23cb1b08fd60e4fb62ba99eb98ccb",
+      "tree": "82b1e91b1a77837a9fa8cbde64abdff553a0b774",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794584271 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794584271 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "601b45c3433738decae16a268437e0b3a8acd162",
+      "rewritten": "5fbf00474433f93b3cba510fd5100f106ef4e25b",
+      "tree": "61923186a9a32c0d3ebeefd65af711980141d7c5",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794590020 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794590020 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "7049dd2bf1f827e7760da07c1850a0b848210c26",
+      "rewritten": "6787efa78a8dfbc4f647b7edcaea60de26870ef6",
+      "tree": "e27eca4defb0bee0e300aec50318926ca1a93890",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794603759 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794603759 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "74f99b2c13f0c1cb38035f9a989b5142f6908961",
+      "rewritten": "22875fd203f6d156ada15892fb2033cc725310b2",
+      "tree": "980f75307819dc52c724894abe941a4dfc46ab23",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794605304 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794605304 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "3a1feb0b262828fa2cfbd5997b1afc56a75d1e42",
+      "rewritten": "10a52afa9332f40d17ff5071aa52fdd1154afb4c",
+      "tree": "0eae2f84bcd67cef07ff13da9a09fb129fdcc865",
+      "author": "author lichen <liulichen112233@gmail.com> 1794615823 -0500",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1794617012 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "2c5665bda0a007f3dd4c58f0c07cbc254b6918f8",
+      "rewritten": "9d03425c966b23d220b3a1fdf1d8a95c81783199",
+      "tree": "a4418b0338c6ab3f6bcef2d59a513f492500735d",
+      "author": "author lichen <liulichen112233@gmail.com> 1794616349 -0500",
+      "committer": "committer Lichen Liu <liulichen112233@gmail.com> 1794617012 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "8124fbcf6780a6cef1876ceb0f0fe85d5105678d",
+      "rewritten": "92e062ed85beb9723eb1f1d215791f18b058781b",
+      "tree": "e6ef1bf69c19c5180b7bacadf19b4f779485fc59",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794625805 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794625805 -0500"
+    },
+    {
+      "repository": "lichen-liu/boboji",
+      "source": "386955abb98e8267a292a3c53ddcc29c44d87d2f",
+      "rewritten": "ce932b0d5e552841faf4312e89f875b96d423e60",
+      "tree": "9bf1038e73d240506239ccd8990e48d180f0be04",
+      "author": "author Lichen Liu <liulichen112233@gmail.com> 1794633404 -0500",
+      "committer": "committer GitHub <noreply@github.com> 1794633404 -0500"
+    }
+  ],
+  "previous_import_commit_aliases": {
+    "a1669814dad7576498e3405f4ea09a8de8ba81b2": "f5fac7783a48db84163d7eb66cac4712d9143eb1",
+    "f730bd441d0d22a4457f13ab933c74451d44c05f": "d3e107d10cb34c92a4c3ee589aaa140fc91755c3",
+    "3011db7137b65e890ac7624dd34a68d1b1b7a0a3": "6e3ee19be77b007148a58e8e42c70f7fb9069990",
+    "f439808d798c7c02c6b1b5d9cee23d6c7df3b2c5": "82307e23e506b83eb47bb9c30781c7fff7fbbb12",
+    "3201ad4025e27b6360890b6b4bfc49829ca1d63a": "cc5ce3f30e7c537295bfaf1c7d21a9fb02cbf7f3",
+    "71e1269e2df07d4698a3e51844ad96cbd2ce78e2": "75418a6e30a7d4b26e9aee4997261631b465e1bc",
+    "17894201edf3140977d01d196f1b360a403f06d4": "d0691e980b8c9218d8d2b98856f0f9be59508d57",
+    "5eaef7f87da6c2918bd82a30152464b612a7543c": "ea2bfbf56d858a8d3090553d7e42fa762305c11d",
+    "8e590851c6809646352abe5dfa67042e8349261b": "40b0a0317fea15cc852ba2c2becd3b2d4d98280e",
+    "7c76e6c97c603f9e18a428084f17b5636bf2c123": "efc04251bed701685250903fb5c06377c4748452",
+    "9b298e4c31ac36aac191216ba6691f3dbbac0917": "d600bba18a016e5181f0d4d50f865c99c29e357d",
+    "73102f751a2de1f567b0878e2c83274064812a20": "7fbeaa6cf8ff15cd6a5bac00057e56b406fb351d",
+    "69a1900a3c924a76dbe2fc51e3fb3f70c49b417c": "17c610c5a472fa7a374dd198406e09fdb0a3b526",
+    "5a795da3219c2e5d20a0310630265f4ba8b451d2": "e3a299f438a3567bd088c623f8d9be4522923127",
+    "a2c68bb6856f97a46fb4dac5226d87f24cecebb6": "35ffbf08a4bf151977ea91468893f67b001db02e",
+    "7e9352c561f066e5720c9adf5c10ea267d4aa435": "71f990627c5cfb9a7ebe6b2324e64c7a84cb409a",
+    "7c0f946132a316728a1bafdfe75f23c8db1e0680": "098193cbf09ad80ea729af17792da7f18acaba41",
+    "df96f997be62e5f8a48471c2b402d09c21cc5c5b": "0c1e02d1c371038a02226b3520b06d8143c7d73b",
+    "88baca5219988e3cd9b63e7e60b22ed8396148a1": "8a8c129b3a0279973b03787bce6c3abba01e737e",
+    "c33ea6b73f6d32b52ef8917b835d54deb86482e3": "111c26340048d41b668d9a7a32e604b495a692e3",
+    "cefd3a88593c6a2f531d79b428e2d3ae6f297add": "1556809daf07ee18b63b7e2524b169625286adc1",
+    "7bfb31502fc93bafc8c7e53a6707bc19e4e488b8": "07b1f9bb7c5e8706532d082edc8bfc0c72a1bd73"
+  },
+  "immutable_release_tags": [
+    "bobowatch-adapter/v0.3.0",
+    "bobowatch-adapter/v0.3.1"
+  ],
+  "private_before_bundle_sha256": "8eda34fd1ead3b6316673242bc2ee59c6acc56d0902e7d549b2f9b7303f89df1",
+  "private_before_bundle_restore_verified": true
+}

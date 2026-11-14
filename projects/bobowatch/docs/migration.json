@@ -42,7 +42,9 @@
       "local-only branches",
       "pre-GitHub history",
       "private runtime and generated files"
-    ]
+    ],
+    "committer_identity_and_date_preserved": true,
+    "parent_chain": "chronologically reconstructed single-parent chain; original cross-project ancestry not preserved"
   },
   "compatibility_consumers": [
     {
@@ -129,7 +131,7 @@
       "all_22_published_replay_trees_authors_dates": "verified_again_on_merged_main"
     }
   },
-  "original_to_main_commits": {
+  "original_to_previous_main_commits": {
     "d66c9d311e40be80bc8c431c186cf7edd944ff2c": "7bfb31502fc93bafc8c7e53a6707bc19e4e488b8",
     "ab3626346e954997f3956bdd1bc4858027c41bcb": "cefd3a88593c6a2f531d79b428e2d3ae6f297add",
     "95166b612df904e897a2d23942db4be981863d74": "c33ea6b73f6d32b52ef8917b835d54deb86482e3",
@@ -152,5 +154,41 @@
     "373d76b8550acb6e15eee1f37464e8463ca181ed": "3011db7137b65e890ac7624dd34a68d1b1b7a0a3",
     "05ffe553de491f93801986a7bab2dc09757373fc": "f730bd441d0d22a4457f13ab933c74451d44c05f",
     "43771f08c96b40856f3b113ec1a7558dbb7220e0": "a1669814dad7576498e3405f4ea09a8de8ba81b2"
+  },
+  "original_to_main_commits": {
+    "43771f08c96b40856f3b113ec1a7558dbb7220e0": "f5fac7783a48db84163d7eb66cac4712d9143eb1",
+    "05ffe553de491f93801986a7bab2dc09757373fc": "d3e107d10cb34c92a4c3ee589aaa140fc91755c3",
+    "373d76b8550acb6e15eee1f37464e8463ca181ed": "6e3ee19be77b007148a58e8e42c70f7fb9069990",
+    "b1ca9251d75eb74696d8bb601a4c06aedfb899d2": "82307e23e506b83eb47bb9c30781c7fff7fbbb12",
+    "6462e6ffaab532f29c212729d20ff2a225d4ae6f": "cc5ce3f30e7c537295bfaf1c7d21a9fb02cbf7f3",
+    "eb891f340a190aa27320926779fb93c55c73bc12": "75418a6e30a7d4b26e9aee4997261631b465e1bc",
+    "708b2e1f90e5b3d68e4abfa5998c82b3f12456ec": "d0691e980b8c9218d8d2b98856f0f9be59508d57",
+    "e967bfa3eda5379b21b743aad20489292bffda6b": "ea2bfbf56d858a8d3090553d7e42fa762305c11d",
+    "f4b9bd77da64a24527dd205425b113ae11cbf639": "40b0a0317fea15cc852ba2c2becd3b2d4d98280e",
+    "d4e794a7a4ca209b1778f9c8ff7c62a5ca4995e8": "efc04251bed701685250903fb5c06377c4748452",
+    "bb812668a13f1a1692dac425cf054e2ad02a9cf8": "d600bba18a016e5181f0d4d50f865c99c29e357d",
+    "48ae2fa48960aa2995af096e585fa34f28483cea": "7fbeaa6cf8ff15cd6a5bac00057e56b406fb351d",
+    "81a937ee361d3fd02f43154ee4f3a8e078d16c63": "17c610c5a472fa7a374dd198406e09fdb0a3b526",
+    "7a172411f3ec23fb27151724ca14236e8c999ee7": "e3a299f438a3567bd088c623f8d9be4522923127",
+    "a0faeb64f13d7c40410de60d8e0e65009d86bdb0": "35ffbf08a4bf151977ea91468893f67b001db02e",
+    "a55c24f3a403021a52fa17176c21ef1ee36c817e": "71f990627c5cfb9a7ebe6b2324e64c7a84cb409a",
+    "d6eb3167aabf41ad00b06e5e478f2b255d195fc3": "098193cbf09ad80ea729af17792da7f18acaba41",
+    "2660037b46329718c9c439ee0e975c214642ae35": "0c1e02d1c371038a02226b3520b06d8143c7d73b",
+    "0d77effe168508c007f69b5dcbb64fa4b6403a6a": "8a8c129b3a0279973b03787bce6c3abba01e737e",
+    "95166b612df904e897a2d23942db4be981863d74": "111c26340048d41b668d9a7a32e604b495a692e3",
+    "ab3626346e954997f3956bdd1bc4858027c41bcb": "1556809daf07ee18b63b7e2524b169625286adc1",
+    "d66c9d311e40be80bc8c431c186cf7edd944ff2c": "07b1f9bb7c5e8706532d082edc8bfc0c72a1bd73"
+  },
+  "history_reconstruction": {
+    "date": "2026-11-14",
+    "reason": "owner requested chronological history without merge commits",
+    "record": "../../../.github/history/2026-11-14.json",
+    "previous_main": "386955abb98e8267a292a3c53ddcc29c44d87d2f",
+    "previous_main_retained_by": "archive/boboji-main-before-chronology-2026-11-14",
+    "reconstructed_head_before_audit": "ce932b0d5e552841faf4312e89f875b96d423e60",
+    "original_author_and_committer_headers_preserved": true,
+    "historical_project_trees_verified": true,
+    "all_application_files_unchanged": true,
+    "existing_release_tags_assets_and_provenance_unchanged": true
   }
 }

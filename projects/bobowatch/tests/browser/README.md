@@ -4,7 +4,7 @@ These checks use development-only Playwright, a disposable SQLite database and
 fictional observations. They never connect to an installed BoboWatch runtime.
 Production server and adapter dependencies do not include Node or Playwright.
 
-From the repository root, with the project's Python environment activated:
+From the BoboWatch project directory, with the project's Python environment activated:
 
 ```sh
 python -m pip install -r requirements-core.txt

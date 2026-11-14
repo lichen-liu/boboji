@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,7 +39,20 @@ class RuntimeTests(unittest.TestCase):
             patch.object(installer, "busy", return_value=False),
             patch.object(installer.venv.EnvBuilder, "create"),
             patch.object(installer.subprocess, "run") as run,
-            patch.object(installer.subprocess, "check_output", return_value="test-commit\n"),
+            patch.object(
+                installer,
+                "source_identity",
+                return_value=(
+                    installer.REPO.parents[1],
+                    {
+                        "source_repository": "https://github.com/lichen-liu/boboji",
+                        "source_project": "projects/bobowatch",
+                        "source_commit": "test-commit",
+                        "source_tree": "test-tree",
+                        "uncommitted_changes": False,
+                    },
+                ),
+            ),
             patch("builtins.print"),
         ):
             installer.install(self.root)
@@ -72,6 +86,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse((self.root / "ramdisk.json").exists())
         self.assertFalse((self.root / "installing").exists())
         manage.verify_installation(self.root)
+        receipt = json.loads((self.root / "installation.json").read_text())
+        self.assertEqual(receipt["source_project"], "projects/bobowatch")
+        self.assertEqual(receipt["source_tree"], "test-tree")
         (self.root / "app/bobowatch/manage.py").write_text("changed")
         with self.assertRaisesRegex(Invalid, "receipt"):
             manage.verify_installation(self.root)
@@ -79,6 +96,43 @@ class RuntimeTests(unittest.TestCase):
     def test_invalid_ram_size_is_rejected_before_creating_runtime(self):
         with self.assertRaisesRegex(ValueError, "512"):
             installer.install(self.root, ram_bytes=1024**3 + 1)
+        self.assertFalse(self.root.exists())
+
+    def test_nested_checkout_and_symlink_cannot_hold_private_installation(self):
+        checkout = Path(self.temp.name) / "checkout"
+        project = checkout / "projects/bobowatch"
+        project.mkdir(parents=True)
+        (project / "example.py").write_text("pass\n")
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(checkout),
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-qm",
+                "Fixture",
+            ],
+            check=True,
+        )
+        top, receipt = installer.source_identity(project)
+        self.assertEqual(top, checkout.resolve())
+        self.assertEqual(receipt["source_project"], "projects/bobowatch")
+        self.assertFalse(receipt["uncommitted_changes"])
+        link = Path(self.temp.name) / "checkout-link"
+        link.symlink_to(checkout, target_is_directory=True)
+        for destination in (checkout / "var/watch", link / "var/watch"):
+            with self.assertRaisesRegex(ValueError, "outside the source checkout"):
+                installer.install(destination, repo=project)
+            self.assertFalse(destination.exists())
+        (project / "example.py").write_text("changed = True\n")
+        with self.assertRaisesRegex(ValueError, "Commit project changes"):
+            installer.install(self.root, repo=project)
         self.assertFalse(self.root.exists())
 
     def test_active_install_and_failed_update_refuse_to_start(self):

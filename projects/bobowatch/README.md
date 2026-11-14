@@ -26,7 +26,7 @@ RAM-only and can be lost on reboot, power loss or explicit volume release.
 
 ## Start the demo
 
-Requires Python 3.11+ on macOS or Linux. Run from this checkout:
+Requires Python 3.11+ on macOS or Linux. Run from this project directory (`projects/bobowatch` in Boboji):
 
 ```sh
 python3 -m venv .venv
@@ -159,8 +159,8 @@ do not deploy or enable monitoring in a hosted application.
 
 ## GitHub repository
 
-Source: [lichen-liu/bobowatch](https://github.com/lichen-liu/bobowatch). See
-[repository setup](docs/github.md) and the [CI and branch policy](.github/README.md)
+Source: [Boboji / BoboWatch](https://github.com/lichen-liu/boboji/tree/main/projects/bobowatch). See
+[repository setup](docs/github.md) and the [CI and branch policy](../../.github/README.md)
 for contributing and requesting checks.
 
 ## Checks
@@ -185,8 +185,8 @@ Optional development tools:
 
 ```sh
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/ruff check bobowatch tests examples installation deployment
-.venv/bin/ruff format --check bobowatch tests examples installation deployment
+.venv/bin/ruff check bobowatch tests examples installation deployment scripts
+.venv/bin/ruff format --check bobowatch tests examples installation deployment scripts
 ```
 
 The tests cover protocol/authentication boundaries, atomic retries and event

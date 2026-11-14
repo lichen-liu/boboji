@@ -4,6 +4,29 @@ On 2026-11-14, the owner requested a chronological, linear history with no
 merge commits, accepting changed commit IDs. This replaces the initial
 BoboWatch import, which had appended October work after November GPX work.
 
+## Flightrepo integration on 2026-11-14
+
+The owner then requested Flightrepo's full migration with the same chronological,
+single-parent policy. Its 41 public main commits begin on October 9 and interleave
+with BoboWatch and BoboTrail in the [new map](flightrepo-2026-11-14.json). All 49
+previous Boboji commits retain their exact author/committer headers and component
+snapshots; every imported Flightrepo subtree matches the original tree and modes.
+These 90 source commits are followed by integration work at its actual date.
+Cross-project parents are reconstructed, and no merge commits are introduced.
+Chronology follows original committer timestamps. Two neighboring commits have
+slightly earlier original author times because they were authored in parallel
+and committed later; both original dates are retained in the map.
+
+Previous main `ebedbb5e68d58e5b8718dfb391fabebd321cd80d` is retained at
+`archive/boboji-main-before-flightrepo-2026-11-14`. The earlier maps below remain
+historical records. Existing adapter release tags, assets, and source identities
+stay fixed. Use the newest map when reconciling unfinished work from older clones.
+
+Flightrepo's production state is now under ignored root `var/flightrepo/`.
+See its [storage and migration record](../../projects/flightrepo/docs/migration.md)
+for the serving/ingestion paths, preserved identities, private backup verification,
+legacy path compatibility, explicit deployment, and rollback procedure.
+
 ## Recorded reconstruction
 
 The [commit map](2026-11-14.json) records 48 source commits and aliases from the

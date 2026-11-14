@@ -314,6 +314,8 @@ async def check_installation(root: Path) -> None:
                     "departure_end": (start + timedelta(days=2)).isoformat(),
                     "horizon_end": horizon,
                     "time_basis": bootstrap["default_time_basis"],
+                    "max_legs": 1,
+                    "limit": 1,
                 },
             )
             if response.status_code != 200 or not response.json().get("items"):

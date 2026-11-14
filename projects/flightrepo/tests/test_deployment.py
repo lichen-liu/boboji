@@ -430,6 +430,8 @@ def install_boundary(monkeypatch, scripts, *, fail=None):
         stdout = (
             "a" * 40
             if command[:3] == ["git", "rev-parse", "HEAD"]
+            else "b" * 40
+            if command[:2] == ["git", "rev-parse"]
             else "fastapi==test\n"
             if command[-1] == "freeze"
             else ""
@@ -474,6 +476,8 @@ def test_successful_install_clears_marker_and_never_starts_jobs(
     assert scripts.serve.validate_database(checkout / "var/hosted/flights.db") == 12
     receipt = json.loads((root / "installation.json").read_text())
     assert receipt["data_mode"] == "synthetic" and len(receipt["wheel_sha256"]) == 64
+    assert receipt["source_repository"] == "https://github.com/lichen-liu/boboji"
+    assert receipt["source_project"] == "." and receipt["source_tree"] == "b" * 40
     assert root.stat().st_mode & 0o077 == 0
     assert not any(
         "launchctl" in str(x) or "cloudflared" in str(x) for command in commands for x in command
@@ -680,6 +684,74 @@ def test_stop_attempts_both_jobs_even_if_tunnel_cannot_unload(scripts, monkeypat
     with pytest.raises(RuntimeError, match="tunnel"):
         scripts.manage.stop()
     assert len(calls) == 2 and state == {"tunnel"}
+
+
+def delayed_shutdown(scripts, monkeypatch, *, never_finishes=False):
+    clock, requested = [0.0], []
+    exits = {"tunnel": 0.2, "server": 0.4}
+
+    def loaded(job):
+        return job not in requested or never_finishes or clock[0] < exits[job]
+
+    def launch(*args):
+        assert args[0] == "bootout"
+        requested.append(next(job for job in exits if args[1].endswith("." + job)))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(scripts.manage, "loaded", loaded)
+    monkeypatch.setattr(scripts.manage, "launchctl", launch)
+    monkeypatch.setattr(scripts.manage.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        scripts.manage.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    return clock, requested
+
+
+def test_stop_waits_for_successful_bootouts_to_disappear(scripts, monkeypatch, capsys):
+    clock, requested = delayed_shutdown(scripts, monkeypatch)
+    scripts.manage.stop()
+    assert requested == ["tunnel", "server"]
+    assert clock[0] >= 0.4
+    assert not any(scripts.manage.loaded(job) for job in scripts.manage.LABELS)
+    assert "Stopped. Both jobs are unloaded" in capsys.readouterr().out
+
+
+def test_stop_times_out_without_claiming_success(scripts, monkeypatch, capsys):
+    clock, requested = delayed_shutdown(scripts, monkeypatch, never_finishes=True)
+    with pytest.raises(RuntimeError, match="Could not unload:.*tunnel.*server"):
+        scripts.manage.stop()
+    assert requested == ["tunnel", "server"]
+    assert 20 <= clock[0] <= 20.01
+    assert "Stopped." not in capsys.readouterr().out
+
+
+def test_deploy_waits_for_unload_before_installing(tmp_path, scripts, monkeypatch):
+    clock, requested = delayed_shutdown(scripts, monkeypatch)
+    spec = importlib.util.spec_from_file_location(
+        "flyji_delayed_stop", REPO / "deployment/deploy.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    stages = []
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "start", lambda *args, **kwargs: stages.append("start"))
+    monkeypatch.setattr(module, "check", lambda *args: stages.append("check"))
+
+    def install(*args):
+        # Reproduce the real installer's guard immediately after stop returns.
+        if any(scripts.manage.loaded(job) for job in scripts.manage.LABELS):
+            raise ValueError("Stop Flyji before installing or updating it.")
+        stages.append("install")
+
+    installer_spec = SimpleNamespace(
+        loader=SimpleNamespace(exec_module=lambda target: setattr(target, "install", install))
+    )
+    monkeypatch.setattr(module.importlib.util, "spec_from_file_location", lambda *a: installer_spec)
+    monkeypatch.setattr(module.importlib.util, "module_from_spec", lambda spec: SimpleNamespace())
+    module.deploy(tmp_path / "runtime")
+    assert requested == ["tunnel", "server"]
+    assert clock[0] >= 0.4
+    assert stages == ["install", "start", "check"]
 
 
 class Response(io.BytesIO):
@@ -1035,6 +1107,8 @@ def test_real_preflight_retains_search_and_rebuild_without_archive_statistics(
 
         def counted(self, request, original=original, method=method):
             calls.append(method)
+            if method == "search_itineraries":
+                assert request.max_legs == 1 and request.limit == 1
             return original(self, request)
 
         monkeypatch.setattr(FlightReader, method, counted)
@@ -1092,6 +1166,9 @@ def test_real_public_probe_uses_summary_and_preserves_end_to_end_search(
         assert url.path != "/v1/catalog" and timeout == 20
         if url.path == "/v1/bootstrap":
             assert url.query == "include_airports=false"
+        if url.path == "/v1/itineraries/search":
+            payload = json.loads(request.data)
+            assert payload["max_legs"] == 1 and payload["limit"] == 1
         value = bodies[url.path]
         return Response(
             value if isinstance(value, bytes) else json.dumps(value).encode(), request.full_url
@@ -1550,3 +1627,22 @@ def test_deploy_stops_at_failure_and_unloads_failed_start_or_check(
         "check": ["stop", "install", "start", "check", "stop"],
     }
     assert calls == expected[failure]
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_installation_must_stay_outside_containing_monorepo(tmp_path, scripts, monkeypatch, alias):
+    checkout = tmp_path / "monorepo"
+    (checkout / ".git").mkdir(parents=True)
+    project = checkout / "projects/flightrepo"
+    project.mkdir(parents=True)
+    inside = checkout / "var/private-runtime"
+    if alias:
+        root = tmp_path / "alias"
+        inside.parent.mkdir()
+        root.symlink_to(inside, target_is_directory=True)
+    else:
+        root = inside
+    monkeypatch.setattr(scripts.install, "loaded", lambda job: False)
+    with pytest.raises(ValueError, match="entire source checkout"):
+        scripts.install.install(root, project)
+    assert not inside.exists()

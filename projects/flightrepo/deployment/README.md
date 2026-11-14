@@ -1,6 +1,6 @@
 # Run Flyji through Cloudflare
 
-From the repository root, install the app and connector:
+From `boboji/projects/flightrepo/`, install the app and connector:
 
 ```sh
 python3 installation/install.py
@@ -79,6 +79,10 @@ To stop both processes and their automatic restart:
 This retains the runtime, token and hosted database. It does not remove the
 Cloudflare tunnel or DNS route. To replace the token, stop first, run `tunnel`,
 then start again. Update the app using the [installation instructions](../installation/README.md).
+
+Stop verifies that both launchd jobs have disappeared before reporting success.
+It allows up to 20 seconds after the unload requests for shutdown to finish. If
+confirmation fails, deployment stops before installation begins.
 
 The scripts do not configure Cloudflare resources, change DNS or install paid
 add-ons. Use the standard named HTTP tunnel and review the account's plan in the
@@ -175,3 +179,22 @@ A failed install leaves the app stopped. A failed start or final deployment chec
 unloads both jobs, preserving configuration, credentials and databases. Cleanup
 failures are reported rather than claiming the app is stopped. Deployment uses
 the current checkout; update it separately with `git pull`.
+
+## Consolidated source and private state
+
+Deploy from the merged Boboji checkout with `./deployment/flyji deploy`, then
+run `./deployment/flyji check` and `./deployment/flyji check --public`. The source
+move keeps the existing private runtime, port, hostname, tunnel, and monitoring
+endpoint. Source changes do not automatically deploy services.
+
+The hosted database is now under root `var/flightrepo/hosted/`, with its separate
+ingestion workspace under root `var/flightrepo/ingestion/`. The project's ignored
+`var` symlink preserves normal relative CLI paths. The legacy checkout's `var`
+link remains compatible with older saved commands. Stored ingestion authority
+must point to the canonical serving path while preserving both database identities.
+See [migration and recovery](../docs/migration.md) before changing these paths.
+
+Real-data deployment probes request one admitted direct itinerary and rebuild
+its selected leg. This bounds smoke-test work on large archives while preserving
+real-data routing verification. Interactive route searches retain their existing
+connection settings and budgets.

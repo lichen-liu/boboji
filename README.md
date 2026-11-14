@@ -7,6 +7,7 @@ documentation, and deployment under `projects/` and runs independently.
 | --- | --- | --- |
 | [BoboTrail](projects/bobotrail/README.md) | Convert Google Maps Timeline to Fog of World GPX, inspect country timelines, and preview/confirm GPX pruning. | Python 3.9+, standard library |
 | [BoboWatch](projects/bobowatch/README.md) | Local monitoring, application adapters, and a trusted-LAN dashboard. | Python 3.11+, pinned Waitress |
+| [Flyji / Flightrepo](projects/flightrepo/README.md) | Flight ingestion, explicit publication, route exploration, and local/public serving. | Python 3.11+, FastAPI, SQLite |
 
 Run BoboTrail from the repository root:
 
@@ -57,7 +58,8 @@ Shared rules live in [AGENTS.md](AGENTS.md) and the
 PRs to `main`, up-to-date branches, and squash/rebase merges. Add any PR label
 after the final push to request CI; pushes to `main` run automatically.
 The required `pytest (Python 3.13)` check gates BoboTrail plus BoboWatch's
-Python, JavaScript, adapter packaging, and browser checks. Existing protections
+Python, JavaScript, adapter packaging, and browser checks, plus Flyji’s Python,
+package, JavaScript, and browser checks. Existing protections
 and trigger rules are preserved.
 
 Project-specific instructions live beside their code. Private exports, generated
@@ -67,8 +69,8 @@ BoboTrail's existing private data link survives the product rename.
 
 The [BoboWatch migration design](projects/bobowatch/docs/monorepo-migration.md)
 and [provenance manifest](projects/bobowatch/docs/migration.json) record the source
-history, compatibility dependencies, rollout, and archival gates. Flightrepo's
-source and real database are a separate later migration.
+history, compatibility dependencies, rollout, and archival gates. Flightrepo’s [migration record](projects/flightrepo/docs/migration.md) documents
+its chronological import, production storage relocation, and recovery commands.
 
 The [history record and commit map](.github/history/README.md) describe the
 chronological reconstruction, retained release references, and commands for

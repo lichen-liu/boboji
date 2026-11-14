@@ -6,6 +6,11 @@ Flyji shares boboji.fyi's fonts and branding with Trip Split and AeroRepo. Its r
 
 This preview uses imported schedules. It does not establish seat availability, fares, booking protection or whether a transfer is suitable for a traveler. The demo data is synthetic; coverage is unknown.
 
+Source and operations now live in Boboji under `projects/flightrepo/`.
+Run the commands below from that project directory. Private state lives in
+root `var/flightrepo/` through the ignored project `var` symlink. See the
+[migration record](docs/migration.md) for history and production storage.
+
 ## Try the demo
 
 ```sh
@@ -145,4 +150,4 @@ country geometry in one SVG path. Versioned assets serve immutable releases from
 memory; only page requests and unknown releases scan for file changes. See
 [web performance notes](docs/web-performance.md) for the scope and local measurements.
 
-Keep generated reports, screenshots, replay files and build outputs under `var/`. GitHub uses label-triggered PR checks and automatic checks on `main`; see the [CI policy](.github/README.md).
+Keep generated reports, screenshots, replay files and build outputs under `var/`. GitHub uses label-triggered PR checks and automatic checks on `main`; see the [CI policy](../../.github/README.md).

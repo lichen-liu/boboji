@@ -915,7 +915,7 @@ class FlightReader(SQLiteConnection):
             license="ODbL-1.0",
             license_url="https://opendatacommons.org/licenses/odbl/1-0/",
             attribution="Timezone Boundary Builder; OpenStreetMap contributors",
-            reproduction="https://github.com/lichen-liu/flightrepo/blob/main/docs/ingestion.md",
+            reproduction="https://github.com/lichen-liu/boboji/blob/main/projects/flightrepo/docs/ingestion.md",
             mappings=mappings,
         )
 

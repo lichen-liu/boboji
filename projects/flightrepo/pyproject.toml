@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Provider-neutral ingestion and route exploration for commercial flights"
 requires-python = ">=3.11"
 dependencies = [
-  "boboji-bobowatch-adapter @ https://github.com/lichen-liu/boboji/releases/download/bobowatch-adapter/v0.3.0/boboji_bobowatch_adapter-0.3.0-py3-none-any.whl#sha256=f28b1b69927b26758c225d979f7fb20c20c8763e5fea0d52a1e2d8ad221d3fdc",
+  "boboji-bobowatch-adapter @ https://github.com/lichen-liu/boboji/releases/download/bobowatch-adapter/v0.3.1/boboji_bobowatch_adapter-0.3.1-py3-none-any.whl#sha256=d6829810f53320fcc5b186912b9479579742a0d833e4513366de5451a2ff42a1",
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "pydantic-settings>=2.5,<3",

@@ -1,6 +1,6 @@
 # Install Flyji on this Mac
 
-From the repository root, using Python 3.11+ with pip as your normal macOS user:
+From `boboji/projects/flightrepo/`, using Python 3.11+ with pip as your normal macOS user:
 
 ```sh
 python3 installation/install.py
@@ -106,21 +106,32 @@ preventing pip from deleting the new adapter's overlapping files during upgrade.
 Private runtime settings, tokens, and data are preserved. If upgrading manually,
 uninstall the old application package before installing the new release.
 
-Monitoring integration tests need a matching fictional receiver, separate from
-the runtime dependency. CI reads the adapter's embedded source revision and
-checks out only the corresponding Boboji project under ignored
-`var/bobowatch-source`. No tests contact an installed monitor or production data.
+Monitoring integration tests use the canonical sibling collector as a fictional
+receiver, separate from the runtime dependency. This verifies compatibility
+whenever either project changes. No tests contact an installed monitor or
+production data.
 For local development, after installing the dev dependencies:
 
 ```sh
-git clone --filter=blob:none --no-checkout https://github.com/lichen-liu/boboji.git var/bobowatch-source
-git -C var/bobowatch-source sparse-checkout set projects/bobowatch
-watch_fixture_revision="$(python3 -c 'import json; from pathlib import Path; import bobowatch; print(json.loads(Path(bobowatch.__file__).with_name("_adapter_build.json").read_text())["source_commit"])')"
-git -C var/bobowatch-source checkout --detach "$watch_fixture_revision"
-python3 -m pytest -q
+python -m pytest -q
 ```
 
 An existing local canonical source can instead be selected explicitly with
 `BOBOWATCH_TEST_SOURCE=/absolute/path/to/projects/bobowatch/bobowatch` for tests.
 The test source is never included in the application wheel or installed runtime.
 Collector installation is independent, from `projects/bobowatch` in Boboji.
+
+## Monorepo source and storage
+
+Production state is rooted at `boboji/var/flightrepo/`. Create the ignored project
+link before installation: from `projects/flightrepo/`, run
+`ln -s ../../var/flightrepo var` when `var` does not already exist. Preserve an
+existing link or directory; never replace production state with demo files.
+The installed real-mode settings select the canonical absolute serving path.
+The private runtime remains outside the entire checkout. Installation receipts
+identify the Boboji commit, project path, project tree, and installed file hashes.
+
+The migration keeps a hash-pinned adapter distribution so this project remains
+independently installable without embedding duplicate modules. Shared CI tests
+that installed adapter against the canonical sibling collector. From the project
+directory, `python -m pytest -q` uses that sibling automatically.

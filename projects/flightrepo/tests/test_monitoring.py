@@ -23,12 +23,11 @@ from server.monitoring import provision, wrap_application
 @pytest.fixture(scope="session")
 def watch_backend():
     # The installed dependency contains only the adapter. Load a matching
-    # fictional test receiver separately from the canonical Boboji source.
+    # fictional test receiver from the canonical sibling project.
     source = Path(
         os.environ.get(
             "BOBOWATCH_TEST_SOURCE",
-            Path(__file__).resolve().parents[1]
-            / "var/bobowatch-source/projects/bobowatch/bobowatch",
+            Path(__file__).resolve().parents[2] / "bobowatch/bobowatch",
         )
     )
     if not (source / "__init__.py").is_file():

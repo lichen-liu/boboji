@@ -43,9 +43,16 @@ print("embedded" if any(str(path).startswith("bobowatch/") for path in files) el
     return True
 
 
+def source_checkout(repo):
+    repo = repo.resolve()
+    return next((path for path in (repo, *repo.parents) if (path / ".git").exists()), repo)
+
+
 def install(root: Path, repo: Path = REPO):
     if any(loaded(job) for job in LABELS):
         raise ValueError("Stop Flyji before installing or updating it.")
+    if root.resolve().is_relative_to(source_checkout(repo)):
+        raise ValueError("Install outside the entire source checkout.")
     if root.exists() or root.is_symlink():
         require_private(root, directory=True)
     else:
@@ -168,7 +175,17 @@ def install(root: Path, repo: Path = REPO):
             "git",
             "status",
             "--porcelain",
+            "--",
+            ".",
         ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    project = repo.resolve().relative_to(source_checkout(repo)).as_posix()
+    source_tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}" if project == "." else "HEAD:" + project],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -190,6 +207,9 @@ def install(root: Path, repo: Path = REPO):
         json.dumps(
             {
                 "source_commit": commit,
+                "source_repository": "https://github.com/lichen-liu/boboji",
+                "source_project": project,
+                "source_tree": source_tree,
                 "uncommitted_changes": bool(dirty),
                 "wheel_sha256": fingerprint,
                 "runtime_files_sha256": copied,

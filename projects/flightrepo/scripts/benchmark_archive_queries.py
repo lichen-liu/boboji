@@ -27,11 +27,28 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def load_source(name, path, revision=None):
-    source = (
-        subprocess.check_output(["git", "show", f"{revision}:{path}"], cwd=REPO, text=True)
-        if revision
-        else (REPO / path).read_text()
-    )
+    if revision:
+        checkout = Path(
+            subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"], cwd=REPO, text=True
+            ).strip()
+        )
+        project = REPO.relative_to(checkout).as_posix()
+        candidates = [path] if project == "." else [f"{project}/{path}", path]
+        for candidate in candidates:
+            result = subprocess.run(
+                ["git", "show", f"{revision}:{candidate}"],
+                cwd=REPO,
+                text=True,
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                source = result.stdout
+                break
+        else:
+            raise ValueError(f"Revision {revision} has no Flightrepo file {path}")
+    else:
+        source = (REPO / path).read_text()
     module = ModuleType(name)
     module.__file__ = str(REPO / path)
     exec(compile(source, module.__file__, "exec"), module.__dict__)

@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "source_repository": "https://github.com/lichen-liu/flightrepo",
+  "source_main": "e2597711fafc2ee17b8a58cbd7aba7273e5fc44d",
+  "source_tree": "388ce8f034681b7a9138d3c8160ea93c49bc01a9",
+  "destination": "projects/flightrepo",
+  "history_record": "../../../.github/history/flightrepo-2026-11-14.json",
+  "source_main_commits": 41,
+  "both_original_timestamps_preserved": true,
+  "merge_commits": 0,
+  "pending_shutdown_fix": {
+    "source_pr": "https://github.com/lichen-liu/flightrepo/pull/38",
+    "source_commit": "ad3f12e05eaf703483ba620dc044ec86366d97d1",
+    "ported_at_integration_time": true
+  },
+  "original_open_issues": [
+    "https://github.com/lichen-liu/flightrepo/issues/4",
+    "https://github.com/lichen-liu/flightrepo/issues/8",
+    "https://github.com/lichen-liu/flightrepo/issues/13",
+    "https://github.com/lichen-liu/flightrepo/issues/21",
+    "https://github.com/lichen-liu/flightrepo/issues/27"
+  ],
+  "private_git_backups": {
+    "boboji": {
+      "published_main": "ebedbb5e68d58e5b8718dfb391fabebd321cd80d",
+      "bundle_sha256": "513b35717dbbd52f8b6c9469f30499ab2e881e24dbc801ff51cf1eff637a72c1",
+      "restored_refs": 48
+    },
+    "flightrepo": {
+      "published_main": "e2597711fafc2ee17b8a58cbd7aba7273e5fc44d",
+      "bundle_sha256": "b1415905b9a345a093aa8e694608db941c431a49467e111300459773d3e73daf",
+      "restored_refs": 132
+    }
+  },
+  "storage": {
+    "canonical_root": "var/flightrepo",
+    "serving": "var/flightrepo/hosted/flights.db",
+    "ingestion": "var/flightrepo/ingestion/ingestion.db",
+    "project_alias": "projects/flightrepo/var -> ../../var/flightrepo",
+    "legacy_var_alias_retained": true,
+    "real_mode": true,
+    "same_filesystem_directory_move": true,
+    "database_inodes_preserved": true,
+    "store_identity_generation_publication_ownership_and_quota_preserved": true,
+    "serving_path_binding_updated": true,
+    "sqlite_backups_restored_and_page_checked": true,
+    "every_table_count_verified": true,
+    "serving_flight_legs": 40026720,
+    "local_and_public_same_real_flight_verified": true,
+    "initial_failed_probe_exercised_path_rollback": true,
+    "private_records": "var/migrations/flightrepo-2026-11-14"
+  },
+  "adapter": {
+    "distribution": "boboji-bobowatch-adapter",
+    "version": "0.3.1",
+    "wheel_sha256": "d6829810f53320fcc5b186912b9479579742a0d833e4513366de5451a2ff42a1",
+    "embedded_adapter_copy": false,
+    "integration_tests_use_canonical_sibling_collector": true
+  },
+  "publication_gates": [
+    "full_candidate_ci",
+    "lease_checked_history_update",
+    "exact_original_github_protections_restored",
+    "automatic_main_ci",
+    "installed_monorepo_receipt_and_local_public_checks",
+    "open_work_handoff",
+    "source_archive_notice_and_read_only_archival"
+  ]
+}

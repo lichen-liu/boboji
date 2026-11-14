@@ -1,10 +1,48 @@
 # BoboWatch migration design
 
-Status: accepted for execution on 2026-11-13. The owner selected full migration
-and the BoboTrail product name for the former location-history project.
-Execution results and retained provenance are recorded in `migration.json`.
+Status: completed on 2026-11-13 (America/Toronto). BoboTrail is the product
+name and `projects/bobotrail/` is the directory for the former location-history
+tools. The BoboWatch source repository is archived. The design below records
+the accepted approach; final provenance and validation are in
+[`migration.json`](migration.json).
 
-## Recommendation
+## Executed result
+
+- [Boboji import PR](https://github.com/lichen-liu/boboji/pull/22) was rebase-merged.
+  All 22 source commits retain author identity/date and source trailers; every
+  historical blob and file mode was reverified after merge. Original commit IDs
+  and all 16 advertised source refs are retained in the compatibility archive
+  and a restore-verified private bundle.
+- The [adapter 0.3.0 release](https://github.com/lichen-liu/boboji/releases/tag/bobowatch-adapter/v0.3.0)
+  passed isolated wheel install, sdist rebuild, and public download/hash checks.
+  [Flightrepo](https://github.com/lichen-liu/flightrepo/pull/47) and
+  [Trip Dollar](https://github.com/lichen-liu/trip_dollar/pull/16) now consume its
+  hash-pinned package. Their CI derives the development-only collector fixture
+  revision from the artifact, so there is no second manually maintained pin.
+  Real old-wheel upgrades verify the handoff from embedded files to one adapter
+  owner. The consumer application processes were not redeployed.
+- Existing BoboWatch was deployed from Boboji, rolled back to the original
+  revision, then restored to Boboji. Readiness, installed hashes, local/LAN URLs,
+  RAM epoch/history, quota, private state hashes, and resumed producers passed
+  over multiple reporting intervals. No RAM release or database relocation ran.
+- CI retained its original trigger policy and required context. A deliberate
+  failing project check blocked merging; final PR and post-merge checks passed.
+  Live main/development rulesets still match the pre-migration audit.
+- The source [migration notice](https://github.com/lichen-liu/bobowatch/pull/14)
+  passed CI and merged. Flightrepo's old pin has the permanent
+  `compat/flightrepo-6979491` tag, and fresh legacy builds passed before archival.
+- BoboTrail: 1,063 tests; BoboWatch: 103 Python and 34 JavaScript tests plus
+  Chromium/WebKit dashboard/chart suites. Both external consumers passed their
+  final Python/browser/package CI. Detailed operational records and Git bundles
+  stay under ignored `var/migrations/bobowatch-2026-11-13/`, outside Git.
+
+BoboTrail's three scripts are byte-identical to the pre-rename versions. Its
+ignored `var` symlink is still `../../var`, resolving to the same private data.
+Flightrepo's real database remains in its original location; its full source
+and data migration is separate from these adapter compatibility changes.
+
+
+## Accepted design
 
 Make Boboji the canonical monorepo for Boboji-owned projects. Keep each project
 independently runnable and deployable under `projects/<name>/`. A shared source
@@ -32,10 +70,11 @@ original objects in the source archive and a verified Git bundle. Preserve
 source PR discussions at their original URLs; Git history does not migrate
 GitHub issues, reviews, releases, settings, or secrets.
 
-## Evidence from the actual repositories
+## Pre-migration audit
 
-The audit used local source plus GitHub metadata, not just the READMEs.
-Recheck these snapshots when implementation begins.
+The pre-migration audit used local source plus GitHub metadata, not just the
+READMEs. These snapshots describe the state before execution; the completed
+record above supersedes repository and runtime state that changed during cutover.
 
 | Item | Observed on 2026-11-13 |
 | --- | --- |
@@ -197,7 +236,7 @@ GitHub documentation to point at the root rules.
 
 | Job | Scope | Runtime / commands |
 | --- | --- | --- |
-| Existing pytest matrix | Location history | Retain Python 3.9 on Ubuntu 24.04 and Python 3.13 on the existing runner; root `python3 -m pytest -q` |
+| Existing pytest matrix | BoboTrail | Retain Python 3.9 on Ubuntu 24.04 and Python 3.13 on the existing runner; root `python3 -m pytest -q` |
 | BoboWatch Python matrix | BoboWatch | Python 3.11 and 3.14; install its dev requirements, run its Ruff lint/format checks and `python -Werror::ResourceWarning -m unittest discover -s tests -v` |
 | BoboWatch plain JavaScript | BoboWatch | Explicit Node 24 setup; `node --test tests/test_*.cjs` |
 | BoboWatch browser | BoboWatch | Python 3.14, Node 24, locked `npm ci`, Chromium and WebKit; existing fictional chart and full-dashboard harnesses |
@@ -376,11 +415,11 @@ explicitly accept the supported frozen version. Keeping the old submodule pin
 buildable must not be described as receiving future fixes. Do not archive with
 an unacknowledged expectation of continued source updates in the old repo.
 
-The current BoboWatch `pyproject.toml` has no complete adapter distribution
-configuration. This wheel and its consumer changes are implementation work,
-not an artifact assumed to exist already. Add the packaging check to the shared
-required CI chain once implemented. Test the wheel from a clean virtualenv and
-outside all checkouts, proving no collector imports or import-time threads.
+At audit time, BoboWatch had no complete adapter distribution configuration.
+The implementation now builds it through `scripts/build_adapter.py` and verifies
+it through `scripts/verify_adapter.py` in the shared required CI chain. The clean
+virtualenv checks prove isolated imports, absence of collector dependencies and
+import-time threads, and rebuildability from its standalone source archive.
 
 ## Flightrepo's later source and data migration
 
@@ -474,7 +513,7 @@ archival makes code, branches, tags, PRs, issues, and other repository metadata
 read-only; finish the tag and README changes first. Unarchive if recovery later
 requires source metadata changes. Do not archive it for a submodule-only choice.
 
-## Rehearsal results and remaining validation
+## Initial rehearsal before implementation
 
 A disposable local checkout replayed the source on the audited Boboji base.
 It did not alter either installed runtime, the source repository, remote refs,
@@ -495,10 +534,10 @@ CI settings, or database contents.
   Node 24, and the proposed CI gating/installer adaptations remain to be checked
   by the implementation PR. No live RAM/launchd cutover was attempted.
 
-These results validate mechanical relocation, not the yet-to-be-written
-adaptation commit or the archival gates. Keep raw rehearsal bundles, mailbox,
-commit map, and generated output out of Git; reproduce them from the recorded
-source/base revisions when executing the migration.
+Those initial results validated mechanical relocation. The subsequent
+adaptation, CI, consumer, deployment, rollback, and archival gates are completed
+and recorded above and in `migration.json`. Raw bundles, mailbox, commit maps,
+and generated output remain outside Git under the private migration directory.
 
 ## References
 

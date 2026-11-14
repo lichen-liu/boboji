@@ -1,7 +1,7 @@
 # BoboWatch project rules
 
 - See `docs/monorepo-migration.md` and `docs/migration.json` for source provenance
-  and the rollout gates. The former standalone repository becomes a compatibility archive.
+  and the rollout gates. The former standalone repository is a compatibility archive.
 - Keep code, tests, examples, installation, deployment, and documentation
   here. Retain the `bobowatch` Python import name and Python 3.11+ requirement.
 - Preserve the existing unittest, plain Node, and fictional Playwright checks.

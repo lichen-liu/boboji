@@ -121,7 +121,6 @@ The final layout should preserve BoboWatch's working structure:
 boboji/
   README.md                         # project index and shared commands
   AGENTS.md                         # shared repository rules
-  LICENSE
   .gitignore
   pytest.ini                        # explicit location-history test discovery
   .github/
@@ -161,9 +160,9 @@ tokens, local configuration, logs, and runtime folders. Root `var/` and project
 `var/` remain ignored. Never copy a working directory wholesale: import tracked
 Git content, not `.git`, virtualenvs, credentials, runtime snapshots, caches,
 personal exports, or private databases. Preserve existing third-party notices.
-BoboWatch currently has no separate license file; record its incorporation under
-Boboji's MIT license with the owner's rights confirmed rather than claiming a
-source license that does not exist.
+The repository's original MIT declaration was removed on 2026-11-14 at the
+owner's request. Current package builds make no project license declaration;
+historical commits/releases and third-party dependency notices remain intact.
 
 Keep production adapter imports standard-library-only and free of import-time
 threads. No shared `libs/` tree, package registry, task runner, or orchestration
@@ -387,7 +386,7 @@ versioned **adapter wheel**, built from the canonical modules under
 tests, and release instructions inside the BoboWatch project. Build in a
 temporary staging directory; do not maintain a second source copy in Git.
 The distribution should include both ASGI and WSGI plus their standard-library
-dependencies, version/license metadata, and source provenance. It must not
+dependencies, version metadata, and source provenance. It must not
 include collector storage/dashboard code or require Waitress, a live monitor,
 production registration, or frontend tools.
 

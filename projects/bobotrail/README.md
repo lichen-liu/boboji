@@ -1,10 +1,11 @@
-# Location history
+# BoboTrail
 
-Standalone Python 3.9+ tools using only the standard library. Run examples from
+Convert, inspect, and clean your travel trails. Standalone Python 3.9+ tools
+using only the standard library. Run examples from
 this project directory:
 
 ```sh
-cd projects/location_history
+cd projects/bobotrail
 ```
 
 ## Convert Timeline JSON

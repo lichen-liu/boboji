@@ -25,6 +25,24 @@ from manage import (  # noqa: E402
 from serve import read_settings  # noqa: E402
 
 
+def remove_embedded_adapter(python):
+    """Remove the old app owner before pip installs the adapter's overlapping files."""
+    probe = """import importlib.metadata as metadata
+try:
+    files = metadata.distribution(DISTRIBUTION).files or ()
+except metadata.PackageNotFoundError:
+    files = ()
+print("embedded" if any(str(path).startswith("bobowatch/") for path in files) else "separate")
+""".replace("DISTRIBUTION", repr("flight-routes-engine"))
+    result = subprocess.run([str(python), "-c", probe], check=True, capture_output=True, text=True)
+    if result.stdout.strip() != "embedded":
+        return False
+    subprocess.run(
+        [str(python), "-m", "pip", "uninstall", "--yes", "flight-routes-engine"], check=True
+    )
+    return True
+
+
 def install(root: Path, repo: Path = REPO):
     if any(loaded(job) for job in LABELS):
         raise ValueError("Stop Flyji before installing or updating it.")
@@ -74,10 +92,6 @@ def install(root: Path, repo: Path = REPO):
     require_private(database.parent, directory=True)
     if database.exists() or database.is_symlink():
         require_private(database)
-    # Initialize the exact recorded adapter revision before building the wheel.
-    subprocess.run(
-        ["git", "submodule", "update", "--init", "vendor/bobowatch"], cwd=repo, check=True
-    )
     # A failed update stays stopped until a successful install clears this marker.
     private_write(root / "installing", b"Installation in progress; do not start.\n")
     with tempfile.TemporaryDirectory(prefix="flyji-wheel-") as temporary:
@@ -101,6 +115,7 @@ def install(root: Path, repo: Path = REPO):
         fingerprint = hashlib.sha256(wheel.read_bytes()).hexdigest()
         venv.EnvBuilder(with_pip=True).create(root / "venv")
         python = root / "venv/bin/python"
+        remove_embedded_adapter(python)
         subprocess.run(
             [
                 str(python),

@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Provider-neutral ingestion and route exploration for commercial flights"
 requires-python = ">=3.11"
 dependencies = [
+  "boboji-bobowatch-adapter @ https://github.com/lichen-liu/boboji/releases/download/bobowatch-adapter/v0.3.0/boboji_bobowatch_adapter-0.3.0-py3-none-any.whl#sha256=f28b1b69927b26758c225d979f7fb20c20c8763e5fea0d52a1e2d8ad221d3fdc",
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "pydantic-settings>=2.5,<3",
@@ -37,14 +38,8 @@ select = ["E4", "E7", "E9", "F", "I"]
 packages = ["src/core", "src/ingestion", "src/server", "src/admin"]
 
 [tool.hatch.build]
-dev-mode-dirs = ["src", "vendor/bobowatch"]
+dev-mode-dirs = ["src"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"vendor/bobowatch/bobowatch/__init__.py" = "bobowatch/__init__.py"
-"vendor/bobowatch/bobowatch/adapter.py" = "bobowatch/adapter.py"
-"vendor/bobowatch/bobowatch/protocol.py" = "bobowatch/protocol.py"
-"vendor/bobowatch/bobowatch/asgi.py" = "bobowatch/asgi.py"
-"vendor/bobowatch/bobowatch/client.py" = "bobowatch/client.py"
-"vendor/bobowatch/bobowatch/config.py" = "bobowatch/config.py"
-"vendor/bobowatch/bobowatch/paths.py" = "bobowatch/paths.py"
-"vendor/bobowatch/bobowatch/provision.py" = "bobowatch/provision.py"
+
+[tool.hatch.metadata]
+allow-direct-references = true

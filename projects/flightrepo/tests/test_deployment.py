@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import plistlib
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -1356,7 +1357,6 @@ def test_single_command_deploy_orders_stop_install_provision_start_and_check(
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     calls = []
-    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kw: calls.append("submodule"))
     monkeypatch.setattr(module, "loaded", lambda job: True)
     monkeypatch.setattr(module, "stop", lambda: calls.append("stop"))
     monkeypatch.setattr(
@@ -1380,7 +1380,6 @@ def test_single_command_deploy_orders_stop_install_provision_start_and_check(
     root, watch = tmp_path / "flight", tmp_path / "watch"
     module.deploy(root, watch)
     assert calls == [
-        "submodule",
         "stop",
         ("install", root),
         ("start-and-provision", watch),
@@ -1436,7 +1435,9 @@ def test_runtime_registration_works_offline_and_can_switch_targets(tmp_path, scr
 
     root = runtime(tmp_path / "flight", tmp_path / "flights.db")
     (root / "venv/bin").mkdir(parents=True)
-    (root / "venv/bin/python").symlink_to(sys.executable)
+    executable = root / "venv/bin/python"
+    executable.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + ' "$@"\n')
+    executable.chmod(0o700)
     first = initialize(tmp_path / "watch-first", port=9123)
     second = initialize(tmp_path / "watch-second", port=9124)
     original = json.loads((root / "settings.json").read_text())

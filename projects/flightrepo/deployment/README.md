@@ -154,10 +154,10 @@ fails a synthetic deployment check; it does not shorten or truncate user searche
 ## Single-command deployment and optional monitoring
 
 `./deployment/flyji deploy` combines the existing stop/install/start/local-check
-sequence using the pinned submodule. The optional `--bobowatch-runtime-dir PATH`
+sequence using the pinned adapter package. The optional `--bobowatch-runtime-dir PATH`
 provisions monitoring credentials at startup, and subsequent deployments
 reuse the saved registration. It never starts BoboWatch. Hosted monitoring remains
-opt-in. The pinned BoboWatch revision includes the RAM-disk quota/lifecycle controls;
+opt-in. The separately installed BoboWatch collector provides RAM-disk quota/lifecycle controls;
 install its private runtime first, then enable this integration. See
 [the install/reinstall and rollout guide](../docs/monitoring.md) for the exact
 commands. This deployment restarts serving jobs, not the independent ingestion

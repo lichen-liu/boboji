@@ -1,11 +1,10 @@
 # BoboWatch integration and rollout
 
-Flightrepo now has an opt-in HTTP integration with the public
-[BoboWatch repository](https://github.com/lichen-liu/bobowatch), pinned as the
-`vendor/bobowatch` Git submodule. The pin includes its macOS installer, verified
-five-GiB RAM-only storage, circular retention, live quota admin and on-demand
-supervision. Enabling it remains an explicit operator deployment; this branch
-starts no installed apps or user jobs.
+Flightrepo has an opt-in HTTP integration with
+[BoboWatch in Boboji](https://github.com/lichen-liu/boboji/tree/main/projects/bobowatch).
+The adapter is a versioned, SHA-256-pinned package dependency, without a nested
+source repository or embedded duplicate. Collector installation, RAM storage,
+retention, and supervision remain independent operator actions.
 
 ## What is included
 
@@ -17,32 +16,28 @@ starts no installed apps or user jobs.
 - Background authenticated delivery, bounded retry and no request-path telemetry IO.
 - Idempotent local registration/token provisioning at startup and explicit runtime reconfiguration.
 - Live BoboWatch inventory reload and client endpoint/token/interval reload.
-- No adapter package download or new application runtime dependency. The wheel
-  contains eight pinned standard-library BoboWatch source modules. It excludes
-  Waitress, monitoring SQL storage and the dashboard.
+- A pinned standard-library adapter wheel; no Waitress, monitoring SQL storage,
+  dashboard, or collector process in the application dependency.
 
 ## Source, install and deployment
 
-Both Python and browser CI initialize the pinned public submodule without a token.
-For development, clone recursively or run:
+Install the pinned dependency with the normal application requirements:
 
 ```sh
-git submodule update --init vendor/bobowatch
 python -m pip install -e '.[dev]'
-```
-
-The installer also initializes the recorded submodule before building its wheel.
-Installation builds the app and its pinned adapter without accessing BoboWatch's runtime, registry, credentials or API. It preserves existing monitoring settings:
-
-```sh
 python3 installation/install.py
 ```
+
+No submodule initialization is needed. Installation preserves monitoring
+settings and does not access the collector runtime, credentials, or API.
+See [test fixture and upgrade instructions](../installation/README.md#adapter-upgrades-and-monitoring-test-fixtures)
+for the development-only receiver source and legacy embedded-package handoff.
 
 Before first monitoring-enabled startup, install the private non-demo BoboWatch
 runtime (normal user, macOS, Python 3.11+):
 
 ```sh
-cd ~/p/bobowatch
+cd ~/p/boboji/projects/bobowatch
 git switch main
 git pull --ff-only
 python3 installation/install.py
@@ -63,7 +58,6 @@ Return to Flightrepo to install or update its code:
 cd ~/p/flightrepo
 git switch main
 git pull --ff-only
-git submodule update --init vendor/bobowatch
 ```
 
 Installation and monitoring-enabled startup are separate:
@@ -87,7 +81,7 @@ For an existing hosted installation, the combined command remains:
   --bobowatch-runtime-dir "$HOME/Library/Application Support/fyi.boboji.watch"
 ```
 
-It initializes the pinned submodule, stops loaded Flightrepo jobs, installs,
+It stops loaded Flightrepo jobs, installs the pinned adapter dependency,
 registers at startup, starts the app/tunnel and checks local operation. It uses the existing
 private tunnel token; first-time public tunnel setup is still required. A failed
 update retains the installer's existing incomplete-marker behavior and leaves the

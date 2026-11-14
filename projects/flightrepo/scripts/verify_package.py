@@ -15,6 +15,7 @@ import site
 import subprocess
 import tarfile
 import venv
+from email.parser import BytesParser
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import ZipFile
@@ -343,6 +344,20 @@ def main():
     wheel = args.wheel.resolve()
     root = Path(__file__).resolve().parents[1]
     with ZipFile(wheel) as package:
+        metadata_name = next(
+            name for name in package.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = BytesParser().parsebytes(package.read(metadata_name))
+        adapters = [
+            value
+            for value in metadata.get_all("Requires-Dist", [])
+            if value.partition("@")[0].strip().replace("_", "-") == "boboji-bobowatch-adapter"
+        ]
+        assert len(adapters) == 1, "Application must pin exactly one standalone adapter dependency"
+        adapter_requirement = adapters[0]
+        assert not any(name.startswith("bobowatch/") for name in package.namelist()), (
+            "Application must not embed a second adapter owner"
+        )
         for asset in (root / "src").rglob("*"):
             if asset.is_file() and "__pycache__" not in asset.parts and asset.suffix != ".pyc":
                 name = asset.relative_to(root / "src").as_posix()
@@ -378,6 +393,17 @@ def main():
             "--disable-pip-version-check",
             "--quiet",
             str(wheel),
+        )
+        # The adapter must be installed inside the isolated environment as its
+        # own distribution, rather than borrowed from the invoking environment.
+        run(
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--disable-pip-version-check",
+            "--quiet",
+            adapter_requirement,
         )
         # A nested venv does not inherit the invoking venv's dependencies. Add
         # those directories after installing the wheel; their editable-import

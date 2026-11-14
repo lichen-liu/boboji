@@ -3,6 +3,7 @@
 import importlib
 import importlib.util
 import json
+import os
 import sys
 import threading
 import time
@@ -21,9 +22,19 @@ from server.monitoring import provision, wrap_application
 
 @pytest.fixture(scope="session")
 def watch_backend():
-    # Editable installs intentionally expose only the bundled adapter. Load the
-    # full test receiver in a separate namespace from the pinned source checkout.
-    source = Path(__file__).resolve().parents[1] / "vendor/bobowatch/bobowatch"
+    # The installed dependency contains only the adapter. Load a matching
+    # fictional test receiver separately from the canonical Boboji source.
+    source = Path(
+        os.environ.get(
+            "BOBOWATCH_TEST_SOURCE",
+            Path(__file__).resolve().parents[1]
+            / "var/bobowatch-source/projects/bobowatch/bobowatch",
+        )
+    )
+    if not (source / "__init__.py").is_file():
+        pytest.fail(
+            "Fetch the adapter's matching collector test source; see installation/README.md"
+        )
     name = "_watch_receiver_tests"
     spec = importlib.util.spec_from_file_location(
         name, source / "__init__.py", submodule_search_locations=[str(source)]

@@ -57,10 +57,100 @@
     }
   ],
   "execution": {
-    "source_import": "in_progress",
-    "ci": "pending",
-    "standalone_adapter": "pending",
-    "deployment": "pending",
-    "source_archival": "pending"
+    "status": "complete",
+    "completed_at_utc": "2026-11-14T01:08:07.630975+00:00",
+    "import_pr": "https://github.com/lichen-liu/boboji/pull/22",
+    "import_merge_commit": "2c5665bda0a007f3dd4c58f0c07cbc254b6918f8",
+    "source_import": "rebase_merged_with_all_22_source_commits",
+    "ci": "all_final_pr_and_post_merge_checks_passed",
+    "required_gate_failure_probe": "confirmed_merge_blocked",
+    "branch_protections": "unchanged",
+    "ci_triggers": "unchanged",
+    "adapter_release": {
+      "tag": "bobowatch-adapter/v0.3.0",
+      "release_url": "https://github.com/lichen-liu/boboji/releases/tag/bobowatch-adapter/v0.3.0",
+      "wheel_url": "https://github.com/lichen-liu/boboji/releases/download/bobowatch-adapter/v0.3.0/boboji_bobowatch_adapter-0.3.0-py3-none-any.whl",
+      "sha256": "f28b1b69927b26758c225d979f7fb20c20c8763e5fea0d52a1e2d8ad221d3fdc",
+      "public_download_verified": true,
+      "source_commit": "2c5665bda0a007f3dd4c58f0c07cbc254b6918f8"
+    },
+    "consumer_updates": [
+      {
+        "repository": "trip_dollar",
+        "mergeCommit": {
+          "oid": "35b09639deb060947004c77e750a4534610ef60d"
+        },
+        "mergedAt": "2026-11-14T01:00:01Z",
+        "url": "https://github.com/lichen-liu/trip_dollar/pull/16"
+      },
+      {
+        "repository": "flightrepo",
+        "mergeCommit": {
+          "oid": "e2597711fafc2ee17b8a58cbd7aba7273e5fc44d"
+        },
+        "mergedAt": "2026-11-14T01:03:21Z",
+        "url": "https://github.com/lichen-liu/flightrepo/pull/47"
+      }
+    ],
+    "deployment": {
+      "source_commit": "2c5665bda0a007f3dd4c58f0c07cbc254b6918f8",
+      "project_tree": "7b26077a3ab257741a290c4d80184a285898a257",
+      "health_readiness_and_local_lan_url_verified": true,
+      "existing_ram_epoch_and_retained_history_preserved": true,
+      "credentials_inventory_access_and_quota_unchanged": true,
+      "previous_revision_rollback_and_restoration_verified": true,
+      "existing_producer_reporting_resumed": true,
+      "observation_over_multiple_producer_intervals": true,
+      "consumer_applications_redeployed": false,
+      "flightrepo_real_database_touched_by_migration": false
+    },
+    "source_archival": {
+      "archived": true,
+      "url": "https://github.com/lichen-liu/bobowatch",
+      "archive_main": "fceca072be0ebd606b81c78dc6d918065c5b3e04",
+      "notice_pr": "https://github.com/lichen-liu/bobowatch/pull/14"
+    },
+    "private_backups": {
+      "directory": "var/migrations/bobowatch-2026-11-13",
+      "full_bundle_sha256": "9e657cbe71dc1f1937f487365818624c122960df5ca90621f450f9cfcac34ebd",
+      "all_advertised_refs_restored": 16,
+      "legacy_consumer_pin_verified": true,
+      "local_only_refs_retained_privately": true
+    },
+    "validation": {
+      "bobotrail_pytest": 1063,
+      "bobowatch_unittest": 103,
+      "bobowatch_node": 34,
+      "chromium_and_webkit_dashboard_and_charts": "passed",
+      "isolated_adapter_wheel_and_sdist_rebuild": "passed",
+      "legacy_application_wheel_upgrade_tests": "passed",
+      "flightrepo_python_and_browser_ci": "passed",
+      "trip_dollar_python_and_installed_wheel_ci": "passed",
+      "all_22_published_replay_trees_authors_dates": "verified_again_on_merged_main"
+    }
+  },
+  "original_to_main_commits": {
+    "d66c9d311e40be80bc8c431c186cf7edd944ff2c": "7bfb31502fc93bafc8c7e53a6707bc19e4e488b8",
+    "ab3626346e954997f3956bdd1bc4858027c41bcb": "cefd3a88593c6a2f531d79b428e2d3ae6f297add",
+    "95166b612df904e897a2d23942db4be981863d74": "c33ea6b73f6d32b52ef8917b835d54deb86482e3",
+    "0d77effe168508c007f69b5dcbb64fa4b6403a6a": "88baca5219988e3cd9b63e7e60b22ed8396148a1",
+    "2660037b46329718c9c439ee0e975c214642ae35": "df96f997be62e5f8a48471c2b402d09c21cc5c5b",
+    "d6eb3167aabf41ad00b06e5e478f2b255d195fc3": "7c0f946132a316728a1bafdfe75f23c8db1e0680",
+    "a55c24f3a403021a52fa17176c21ef1ee36c817e": "7e9352c561f066e5720c9adf5c10ea267d4aa435",
+    "a0faeb64f13d7c40410de60d8e0e65009d86bdb0": "a2c68bb6856f97a46fb4dac5226d87f24cecebb6",
+    "7a172411f3ec23fb27151724ca14236e8c999ee7": "5a795da3219c2e5d20a0310630265f4ba8b451d2",
+    "81a937ee361d3fd02f43154ee4f3a8e078d16c63": "69a1900a3c924a76dbe2fc51e3fb3f70c49b417c",
+    "48ae2fa48960aa2995af096e585fa34f28483cea": "73102f751a2de1f567b0878e2c83274064812a20",
+    "bb812668a13f1a1692dac425cf054e2ad02a9cf8": "9b298e4c31ac36aac191216ba6691f3dbbac0917",
+    "d4e794a7a4ca209b1778f9c8ff7c62a5ca4995e8": "7c76e6c97c603f9e18a428084f17b5636bf2c123",
+    "f4b9bd77da64a24527dd205425b113ae11cbf639": "8e590851c6809646352abe5dfa67042e8349261b",
+    "e967bfa3eda5379b21b743aad20489292bffda6b": "5eaef7f87da6c2918bd82a30152464b612a7543c",
+    "708b2e1f90e5b3d68e4abfa5998c82b3f12456ec": "17894201edf3140977d01d196f1b360a403f06d4",
+    "eb891f340a190aa27320926779fb93c55c73bc12": "71e1269e2df07d4698a3e51844ad96cbd2ce78e2",
+    "6462e6ffaab532f29c212729d20ff2a225d4ae6f": "3201ad4025e27b6360890b6b4bfc49829ca1d63a",
+    "b1ca9251d75eb74696d8bb601a4c06aedfb899d2": "f439808d798c7c02c6b1b5d9cee23d6c7df3b2c5",
+    "373d76b8550acb6e15eee1f37464e8463ca181ed": "3011db7137b65e890ac7624dd34a68d1b1b7a0a3",
+    "05ffe553de491f93801986a7bab2dc09757373fc": "f730bd441d0d22a4457f13ab933c74451d44c05f",
+    "43771f08c96b40856f3b113ec1a7558dbb7220e0": "a1669814dad7576498e3405f4ea09a8de8ba81b2"
   }
 }

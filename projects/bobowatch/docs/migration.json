@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "source_repository": "https://github.com/lichen-liu/bobowatch",
+  "source_main": "d66c9d311e40be80bc8c431c186cf7edd944ff2c",
+  "source_tree": "7db6bb518beca20c69cecd20757f9ce383f6c168",
+  "boboji_base": "74f99b2c13f0c1cb38035f9a989b5142f6908961",
+  "destination": "projects/bobowatch",
+  "source_main_commits": [
+    "43771f08c96b40856f3b113ec1a7558dbb7220e0",
+    "05ffe553de491f93801986a7bab2dc09757373fc",
+    "373d76b8550acb6e15eee1f37464e8463ca181ed",
+    "b1ca9251d75eb74696d8bb601a4c06aedfb899d2",
+    "6462e6ffaab532f29c212729d20ff2a225d4ae6f",
+    "eb891f340a190aa27320926779fb93c55c73bc12",
+    "708b2e1f90e5b3d68e4abfa5998c82b3f12456ec",
+    "e967bfa3eda5379b21b743aad20489292bffda6b",
+    "f4b9bd77da64a24527dd205425b113ae11cbf639",
+    "d4e794a7a4ca209b1778f9c8ff7c62a5ca4995e8",
+    "bb812668a13f1a1692dac425cf054e2ad02a9cf8",
+    "48ae2fa48960aa2995af096e585fa34f28483cea",
+    "81a937ee361d3fd02f43154ee4f3a8e078d16c63",
+    "7a172411f3ec23fb27151724ca14236e8c999ee7",
+    "a0faeb64f13d7c40410de60d8e0e65009d86bdb0",
+    "a55c24f3a403021a52fa17176c21ef1ee36c817e",
+    "d6eb3167aabf41ad00b06e5e478f2b255d195fc3",
+    "2660037b46329718c9c439ee0e975c214642ae35",
+    "0d77effe168508c007f69b5dcbb64fa4b6403a6a",
+    "95166b612df904e897a2d23942db4be981863d74",
+    "ab3626346e954997f3956bdd1bc4858027c41bcb",
+    "d66c9d311e40be80bc8c431c186cf7edd944ff2c"
+  ],
+  "replay": {
+    "linear": true,
+    "all_historical_files_and_modes_verified": true,
+    "author_identity_and_date_preserved": true,
+    "provenance_trailers": [
+      "Source-Repository",
+      "Source-Commit"
+    ],
+    "original_hashes_retained_in": "original repository and verified private Git bundle",
+    "excluded_from_public_import": [
+      "local-only branches",
+      "pre-GitHub history",
+      "private runtime and generated files"
+    ]
+  },
+  "compatibility_consumers": [
+    {
+      "repository": "lichen-liu/flightrepo",
+      "legacy_pin": "6979491abfa1a794bf998d5d448226a92906c190",
+      "retaining_source_tag": "compat/flightrepo-6979491"
+    },
+    {
+      "repository": "lichen-liu/trip_dollar",
+      "legacy_pin": "7a172411f3ec23fb27151724ca14236e8c999ee7",
+      "retained_by_source_main": true
+    }
+  ],
+  "execution": {
+    "source_import": "in_progress",
+    "ci": "pending",
+    "standalone_adapter": "pending",
+    "deployment": "pending",
+    "source_archival": "pending"
+  }
+}

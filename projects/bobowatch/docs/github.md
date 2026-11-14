@@ -1,37 +1,21 @@
-# GitHub repository
+# GitHub development
 
-BoboWatch has its own public repository:
-<https://github.com/lichen-liu/bobowatch>.
-The independent local checkout is `~/p/bobowatch`, on branch `main`.
+BoboWatch's canonical source is
+[Boboji / BoboWatch](https://github.com/lichen-liu/boboji/tree/main/projects/bobowatch).
+Code, tests, installation, deployment, and documentation stay in this project.
 
-```sh
-git clone https://github.com/lichen-liu/bobowatch.git
-cd bobowatch
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-core.txt
-.venv/bin/python -m bobowatch demo
-```
+Follow the shared [CI and branch policy](../../../.github/README.md): `codex/`
+branches, linear history, PRs to `main`, and a label after the final push to
+request checks. The existing required `pytest (Python 3.13)` job gates the
+project's Python, JavaScript, packaging, and browser checks. Do not apply the
+former standalone repository's settings/rulesets to Boboji.
 
-## Development and CI
+Ordinary changes may squash or rebase. The initial migration uses rebase merge
+to retain the 22 source-main commits. Original commit IDs and PR discussions
+stay in [the original repository](https://github.com/lichen-liu/bobowatch);
+replayed commits have source provenance trailers. See the
+[migration record](migration.json) and [design](monorepo-migration.md).
 
-Create a development branch, make logical commits and open a pull request.
-Add the `run-ci` label to request CI, then request it again after any new commits
-or rebase. Checks run automatically after every push to `main`.
-See [the CI and branch policy](../.github/README.md) for exact required checks
-and merge rules. No repository secrets are needed for BoboWatch's own CI or for
-other projects to fetch this public repository as a submodule.
-
-## Source and runtime data
-
-Commit source, SQL migrations, examples, documentation, screenshot and tests.
-Keep runtime configuration, real tokens, SQLite files, backups and logs outside
-the source checkout. Ignore rules also exclude common accidental runtime files.
-The example inventory contains file references rather than real credentials.
-
-This repository does not deploy or start a monitoring process. Run BoboWatch
-manually when monitoring is wanted, as described in the README. This milestone
-is a prototype with a fictional demo; real application integrations remain future
-work. Consuming projects should pin a reviewed Git submodule commit.
-
-No open-source license has been selected yet. Public visibility makes the source
-readable; it does not by itself grant an open-source license.
+Application installation is independent of CI. Use the
+[operator guide](runtime.md) for an explicit project deployment and the
+[adapter release guide](adapter-release.md) for maintained standalone consumers.

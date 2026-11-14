@@ -1,4 +1,4 @@
-# Location history project rules
+# BoboTrail project rules
 
 - Keep tools as standalone snake_case Python 3.9+ scripts using the standard
   library. `gpx_prune.py` shares `gpx_countries.py` from this directory.

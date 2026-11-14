@@ -13,6 +13,7 @@ their credentials. One pinned Waitress dependency; no
 external collector suite, frontend build or database server.
 
 **[Installation, deployment, upgrades and Flightrepo rollout](docs/runtime.md).**
+**[Boboji process replacement, live sender commands, and clone cleanup](docs/cutover.md).**
 **[Dashboard controls and metric definitions](docs/dashboard.md).**
 **[Production-readiness review and prioritized roadmap](docs/production-readiness.md).**
 

@@ -67,8 +67,6 @@ version = {json.dumps(version)}
 description = "Standard-library BoboWatch adapters and local provisioning"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
-license-files = ["LICENSE"]
 dependencies = []
 
 [project.urls]
@@ -78,7 +76,7 @@ Source = "https://github.com/lichen-liu/boboji/tree/main/projects/bobowatch"
 packages = ["bobowatch"]
 
 [tool.hatch.build.targets.sdist]
-include = ["bobowatch", "pyproject.toml", "README.md", "LICENSE"]
+include = ["bobowatch", "pyproject.toml", "README.md"]
 """
     output = output.resolve()
     with tempfile.TemporaryDirectory(prefix="bobowatch-adapter-build-") as directory:
@@ -95,7 +93,6 @@ include = ["bobowatch", "pyproject.toml", "README.md", "LICENSE"]
             "No collector, database, dashboard, or server dependencies.\n"
             "Importing the adapter does not start monitoring.\n"
         )
-        shutil.copyfile(checkout / "LICENSE", staging / "LICENSE")
         artifacts = Path(directory) / "dist"
         subprocess.run(
             [

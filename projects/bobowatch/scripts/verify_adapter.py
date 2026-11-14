@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import venv
+from email.parser import BytesParser
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -47,6 +48,11 @@ def contents(path):
 
 def verify(wheel, sdist=None):
     files = contents(wheel)
+    metadata_name = next(name for name in files if name.endswith(".dist-info/METADATA"))
+    metadata = BytesParser().parsebytes(files[metadata_name])
+    for field in ("License", "License-Expression", "License-File"):
+        assert not metadata.get_all(field), "Adapter must not emit a project license declaration"
+    assert not any("licenses/" in name for name in files), "Unexpected packaged license file"
     provenance = json.loads(files["bobowatch/_adapter_build.json"])
     expected = {"bobowatch/" + name for name in provenance["modules_sha256"]}
     actual = {name for name in files if name.startswith("bobowatch/")}
@@ -76,6 +82,7 @@ def verify(wheel, sdist=None):
             [str(python), "-c", PROBE], cwd=root, env=environment, text=True
         )
         report = json.loads(result)
+        report["project_license_declaration_absent"] = True
         if sdist:
             subprocess.run(
                 [

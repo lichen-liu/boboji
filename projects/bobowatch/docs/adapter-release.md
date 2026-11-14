@@ -9,7 +9,8 @@ or daemon. Importing it starts no monitoring or threads. It supports Python
 Canonical modules live only in `bobowatch/`. The explicit module allowlist and
 release tooling live in `scripts/`; builds stage temporary files rather than
 maintaining a second source tree. The built wheel and sdist include source
-provenance, checksums, version, and MIT license information.
+provenance, checksums, and version information. Current builds make no project
+license declaration. Previously published artifacts retain their original bytes.
 
 ## Build and verify
 

@@ -1,0 +1,567 @@
+"""Manual controls for Flyji's app and Cloudflare connector on this Mac."""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import plistlib
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from urllib.error import URLError
+from urllib.parse import urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+
+from serve import read_settings
+
+LABELS = {"server": "fyi.boboji.flyji.server", "tunnel": "fyi.boboji.flyji.tunnel"}
+# Readiness and ordinary HTTP checks should fail promptly.
+HTTP_PROBE_TIMEOUT = 20
+# A publication invalidates cached statistics; a cold catalog scans the archive.
+CATALOG_PROBE_TIMEOUT = 180
+# The offline preflight validates sources and exercises routing on real data.
+INSTALLATION_CHECK_TIMEOUT = 180
+# launchctl can acknowledge bootout before the job disappears from its domain.
+STOP_TIMEOUT = 20
+
+
+def runtime_root() -> Path:
+    root = Path(os.environ.get("FLYJI_RUNTIME_DIR", "~/Library/Application Support/fyi.boboji.fly"))
+    root = root.expanduser()
+    if not root.is_absolute():
+        raise ValueError("FLYJI_RUNTIME_DIR must be an absolute path.")
+    return root
+
+
+def require_private(path: Path, *, directory: bool = False):
+    info = path.lstat()
+    expected = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+    if not expected or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError(f"{path.name} must belong to you and be accessible only by you.")
+
+
+def private_write(path: Path, content: bytes):
+    if path.exists() or path.is_symlink():
+        require_private(path)
+    descriptor, temporary = tempfile.mkstemp(prefix=".flyji-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def launchctl(*args):
+    return subprocess.run(["/bin/launchctl", *args], capture_output=True, text=True, timeout=20)
+
+
+def target(job: str) -> str:
+    return f"gui/{os.getuid()}/{LABELS[job]}"
+
+
+def loaded(job: str) -> bool:
+    return launchctl("print", target(job)).returncode == 0
+
+
+def job_definitions(root: Path, cloudflared: str) -> dict:
+    common = {
+        "KeepAlive": True,
+        "ThrottleInterval": 10,
+        "ExitTimeOut": 15,
+        "WorkingDirectory": str(root),
+        "Umask": 0o077,
+        "EnvironmentVariables": {"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1"},
+    }
+    commands = {
+        "server": [str(root / "venv/bin/python"), str(root / "serve.py")],
+        "tunnel": [
+            cloudflared,
+            "tunnel",
+            "--no-autoupdate",
+            "--loglevel",
+            "error",
+            "--metrics",
+            "127.0.0.1:0",
+            "run",
+            "--token-file",
+            str(root / "tunnel-token"),
+        ],
+    }
+    return {
+        job: {
+            **common,
+            "Label": LABELS[job],
+            "ProgramArguments": command,
+            "StandardOutPath": str(root / "logs" / f"{job}.out.log"),
+            "StandardErrorPath": str(root / "logs" / f"{job}.err.log"),
+        }
+        for job, command in commands.items()
+    }
+
+
+def wait_for_server(port: int):
+    deadline = time.monotonic() + 60
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            # Real archives need longer than a demo to aggregate readiness. A short
+            # read timeout leaves expensive requests running and floods startup.
+            with urlopen(
+                f"http://127.0.0.1:{port}/health/ready", timeout=min(HTTP_PROBE_TIMEOUT, remaining)
+            ) as response:
+                data = json.load(response)
+                if response.status == 200 and data.get("status") == "ready":
+                    return
+        except (URLError, TimeoutError, OSError, ValueError):
+            time.sleep(0.2)
+    raise RuntimeError("The app did not become ready. Check the private logs.")
+
+
+def stop():
+    failures = []
+    waiting = []
+    for job in ("tunnel", "server"):
+        try:
+            if loaded(job):
+                result = launchctl("bootout", target(job))
+                if result.returncode and loaded(job):
+                    failures.append(job)
+                else:
+                    waiting.append(job)
+        except (OSError, subprocess.SubprocessError):
+            failures.append(job)
+    deadline = time.monotonic() + STOP_TIMEOUT
+    while waiting:
+        pending = []
+        for job in waiting:
+            try:
+                if loaded(job):
+                    pending.append(job)
+            except (OSError, subprocess.SubprocessError):
+                failures.append(job)
+        waiting = pending
+        if not waiting:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            failures.extend(waiting)
+            break
+        time.sleep(min(0.1, remaining))
+    if failures:
+        raise RuntimeError("Could not unload: " + ", ".join(failures))
+    print("Stopped. Both jobs are unloaded and will not restart.")
+
+
+def connector_binary() -> str:
+    binary = shutil.which("cloudflared")
+    if not binary:
+        raise ValueError("Install the connector first: brew install cloudflared")
+    result = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10)
+    match = re.search(r"\b(\d{4})\.(\d+)\.(\d+)\b", result.stdout)
+    if result.returncode or not match or tuple(map(int, match.groups())) < (2025, 4, 0):
+        raise ValueError("Update cloudflared to 2025.4.0 or later for token-file support.")
+    return str(Path(binary).resolve())
+
+
+def configure_monitoring(root: Path, watch_runtime: Path | None = None):
+    """Register at runtime, using the installed adapter; never needs a live API."""
+    require_private(root, directory=True)
+    require_private(root / "settings.json")
+    data = json.loads((root / "settings.json").read_text())
+    monitoring = data.get("monitoring", {})
+    if not isinstance(monitoring, dict) or type(monitoring.get("enabled", False)) is not bool:
+        raise ValueError("monitoring.enabled must be a boolean")
+    registration = data.get("monitoring_registration", {})
+    if not isinstance(registration, dict):
+        raise ValueError("monitoring_registration must be an object")
+    # Explicit endpoints/credentials without local registration are operator-owned.
+    # Disabled monitoring stays disabled unless an explicit target is selected.
+    if watch_runtime is None and not (
+        monitoring.get("enabled") and registration.get("runtime_dir")
+    ):
+        return False
+    command = [str(root / "venv/bin/python"), "-m", "server.monitoring", "--runtime-dir", str(root)]
+    if watch_runtime is not None:
+        selected = Path(watch_runtime).expanduser()
+        if not selected.is_absolute():
+            raise ValueError("BoboWatch runtime directory must be absolute")
+        command += ["--bobowatch-runtime-dir", str(selected)]
+    subprocess.run(command, check=True, timeout=30)
+    return True
+
+
+def start(root: Path, *, watch_runtime: Path | None = None):
+    state = {job: loaded(job) for job in LABELS}
+    if all(state.values()):
+        if watch_runtime is not None:
+            raise ValueError(
+                "Use monitoring --bobowatch-runtime-dir to change a running sender, or stop then start."
+            )
+        print("Already loaded. Use status and check --public to verify it.")
+        return
+    if any(state.values()):
+        raise ValueError("Only one job is loaded. Run stop, then start.")
+    require_private(root, directory=True)
+    for directory in ("jobs", "logs", "venv"):
+        require_private(root / directory, directory=True)
+    if (root / "installing").exists() or (root / "installing").is_symlink():
+        raise ValueError("Installation is incomplete. Rerun the installer while stopped.")
+    for name in ("settings.json", "installation.json", "manage.py", "serve.py", "tunnel-token"):
+        require_private(root / name)
+    token = (root / "tunnel-token").read_text().strip()
+    if not token or any(character.isspace() for character in token):
+        raise ValueError("Save only the tunnel token with the tunnel command first.")
+    settings = read_settings(root)
+    binary = connector_binary()
+    checked = subprocess.run(
+        [str(root / "venv/bin/python"), str(root / "serve.py"), "--check"],
+        text=True,
+        timeout=INSTALLATION_CHECK_TIMEOUT,
+    )
+    if checked.returncode:
+        raise RuntimeError("Installation check failed. Rerun the installer while stopped.")
+    configure_monitoring(root, watch_runtime)
+    with socket.socket() as probe:
+        try:
+            probe.bind(("127.0.0.1", settings["port"]))
+        except OSError as error:
+            raise ValueError(
+                "Port is occupied. Stop its app or change settings.json and the tunnel route."
+            ) from error
+    definitions = job_definitions(root, binary)
+    try:
+        for job in ("server", "tunnel"):
+            path = root / "jobs" / f"{LABELS[job]}.plist"
+            private_write(path, plistlib.dumps(definitions[job]))
+            result = launchctl("bootstrap", f"gui/{os.getuid()}", str(path))
+            if result.returncode:
+                raise RuntimeError(f"Could not load {job}. Check the private logs.")
+            if job == "server":
+                wait_for_server(settings["port"])
+    except BaseException as error:
+        try:
+            stop()
+        except RuntimeError as cleanup_error:
+            raise RuntimeError(f"Startup failed; cleanup incomplete: {cleanup_error}") from error
+        raise
+    print(f"Started locally at http://127.0.0.1:{settings['port']}/")
+    print(
+        f"Tunnel is starting for https://{settings['hostname']}/. Run check --public to verify it."
+    )
+
+
+def save_token(root: Path):
+    require_private(root, directory=True)
+    if any(loaded(job) for job in LABELS):
+        raise ValueError("Stop Flyji before changing its tunnel token.")
+    if not sys.stdin.isatty():
+        raise ValueError("Run the tunnel command in a terminal to keep the token hidden.")
+    token = getpass.getpass("Cloudflare tunnel token (hidden): ").strip()
+    if not token or any(character.isspace() for character in token):
+        raise ValueError("Paste only the token, not the dashboard's command.")
+    private_write(root / "tunnel-token", (token + "\n").encode())
+    print("Token saved privately. Nothing was started.")
+
+
+def process_name(pid: int) -> str:
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unavailable"
+    return (
+        Path(result.stdout.strip()).name
+        if result.returncode == 0 and result.stdout.strip()
+        else "unavailable"
+    )
+
+
+def status(root: Path):
+    settings = read_settings(root)
+    print(f"Local app: http://127.0.0.1:{settings['port']}/ (configured port: {settings['port']})")
+    for job in LABELS:
+        result = launchctl("print", target(job))
+        if result.returncode:
+            print(f"{job}: stopped (not loaded); PID: none; process: none")
+            continue
+        state = re.search(r"(?m)^\tstate = (.+)$", result.stdout)
+        pid = re.search(r"(?m)^\tpid = ([1-9][0-9]*)$", result.stdout)
+        name = process_name(int(pid[1])) if pid else "none"
+        print(
+            f"{job}: {state[1] if state else 'loaded'}; PID: {pid[1] if pid else 'none'}; process: {name}"
+        )
+    print(f"Private logs: {root / 'logs'}")
+    print("Process state does not verify the public URL. Use check --public.")
+
+
+def probe(base_url: str, *, data_mode="synthetic") -> dict:
+    """Verify the served app and a real synthetic route, with normal TLS validation."""
+
+    def origin(url):
+        parts = urlsplit(url)
+        return parts.scheme, parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)
+
+    expected_origin = origin(base_url)
+
+    class SameOriginRedirect(HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, new_url):
+            if origin(new_url) != expected_origin:
+                raise ValueError("Flyji redirected away from the configured origin.")
+            return super().redirect_request(request, fp, code, msg, headers, new_url)
+
+    opener = build_opener(SameOriginRedirect())
+
+    def fetch(path, payload=None, *, timeout=HTTP_PROBE_TIMEOUT):
+        body = json.dumps(payload).encode() if payload is not None else None
+        request = Request(
+            base_url + path,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Flyji-Deployment-Check/1.0",
+            },
+        )
+        with opener.open(request, timeout=timeout) as response:
+            if origin(response.geturl()) != expected_origin:
+                raise ValueError("The response is not from the configured Flyji origin.")
+            content = response.read(1_000_001)
+            if response.status != 200 or len(content) > 1_000_000:
+                raise ValueError("Unexpected or oversized response from Flyji.")
+            return content
+
+    if b"<title>Flyji" not in fetch("/"):
+        raise ValueError("The URL is not serving the Flyji workspace.")
+    if b"via_airport" not in fetch("/assets/app.mjs"):
+        raise ValueError("The Flyji frontend is missing or outdated.")
+    ready = json.loads(fetch("/health/ready"))
+    if data_mode == "real":
+        bootstrap = json.loads(fetch("/v1/bootstrap?include_airports=false"))
+        return probe_real(base_url, ready, bootstrap, fetch)
+    catalog = json.loads(fetch("/v1/catalog", timeout=CATALOG_PROBE_TIMEOUT))
+    if not isinstance(ready, dict) or not isinstance(catalog, dict):
+        raise ValueError("Unexpected readiness or catalog response from Flyji.")
+    dataset = catalog.get("dataset")
+    if not isinstance(dataset, dict):
+        raise ValueError("The Flyji catalog is missing its dataset.")
+    count = dataset.get("flight_count")
+    departure = dataset.get("first_departure")
+    if (
+        ready.get("status") != "ready"
+        or dataset.get("data_mode") != "synthetic"
+        or not isinstance(count, int)
+        or isinstance(count, bool)
+        or count < 1
+        or not isinstance(departure, str)
+    ):
+        raise ValueError("The first hosted version must use synthetic flight data.")
+    first = datetime.fromisoformat(departure.replace("Z", "+00:00"))
+    start = first.replace(hour=0, minute=0, second=0, microsecond=0)
+    result = json.loads(
+        fetch(
+            "/v1/itineraries/search",
+            {
+                "origin": "YYZ",
+                "destination": "CDG",
+                "via_airport": "AMS",
+                "max_legs": 3,
+                "departure_start": start.isoformat(),
+                "departure_end": (start + timedelta(days=1)).isoformat(),
+                "horizon_end": (start + timedelta(days=7)).isoformat(),
+            },
+        )
+    )
+    items = result.get("items") if isinstance(result, dict) else None
+    legs = (
+        items[0].get("legs")
+        if isinstance(items, list) and items and isinstance(items[0], dict)
+        else None
+    )
+    if (
+        not isinstance(legs, list)
+        or not legs
+        or any(not isinstance(leg, dict) for leg in legs)
+        or legs[0].get("origin_iata") != "YYZ"
+        or legs[-1].get("destination_iata") != "CDG"
+        or not any(leg.get("destination_iata") == "AMS" for leg in legs[:-1])
+    ):
+        raise ValueError("The synthetic YYZ → AMS → CDG search did not return a route.")
+    return {"url": base_url, "flight_count": count, "route_search": "passed"}
+
+
+def probe_real(base_url, ready, bootstrap, fetch):
+    if (
+        not isinstance(ready, dict)
+        or ready.get("status") != "ready"
+        or not isinstance(bootstrap, dict)
+        or bootstrap.get("data_mode") != "real"
+        or type(bootstrap.get("has_records")) is not bool
+    ):
+        raise ValueError("Real serving requires a ready database without demo records")
+    bases = bootstrap.get("available_time_bases")
+    if not isinstance(bases, list) or any(
+        b not in ("scheduled", "observed", "actual") for b in bases
+    ):
+        raise ValueError("Real bootstrap is missing its time evidence")
+    status = "empty dataset" if not bootstrap["has_records"] else "no complete time evidence"
+    coverage = bootstrap.get("local_date_coverage")
+    local_dates = "unknown (older server)"
+    if coverage is not None:
+        if (
+            not isinstance(coverage, dict)
+            or any(
+                type(coverage.get(key)) is not int or coverage[key] < 0
+                for key in ("airports", "resolved", "unresolved")
+            )
+            or coverage["resolved"] + coverage["unresolved"] != coverage["airports"]
+        ):
+            raise ValueError("Invalid airport-local date coverage")
+        local_dates = (
+            f"{coverage['resolved']}/{coverage['airports']} airports have timezone metadata"
+        )
+    if not bases:
+        return {
+            "url": base_url,
+            "flight_count": 0 if not bootstrap["has_records"] else None,
+            "route_search": status,
+            "local_dates": local_dates,
+        }
+    route, departure = bootstrap.get("suggested_route"), bootstrap.get("first_departure")
+    basis = bootstrap.get("default_time_basis")
+    if not isinstance(route, dict) or not isinstance(departure, str) or basis not in bases:
+        raise ValueError("Real dataset is missing searchable departure evidence")
+    first = datetime.fromisoformat(departure.replace("Z", "+00:00"))
+    start = first.replace(hour=0, minute=0, second=0, microsecond=0)
+    result = json.loads(
+        fetch(
+            "/v1/itineraries/search",
+            {
+                "origin": route.get("origin_iata"),
+                "destination": route.get("destination_iata"),
+                "departure_start": start.isoformat(),
+                "departure_end": (start + timedelta(days=2)).isoformat(),
+                "horizon_end": (start + timedelta(days=7)).isoformat(),
+                "time_basis": basis,
+                # Bootstrap supplies an admitted direct leg. Bound smoke-test work.
+                "max_legs": 1,
+                "limit": 1,
+            },
+        )
+    )
+    if not isinstance(result, dict) or not result.get("items"):
+        raise ValueError("Real dataset route search returned no itinerary")
+    legs = result["items"][0].get("legs", [])
+    if (
+        not legs
+        or legs[0].get("origin_iata") != route.get("origin_iata")
+        or legs[-1].get("destination_iata") != route.get("destination_iata")
+    ):
+        raise ValueError("Real dataset route search returned the wrong route")
+    if coverage is not None:
+        if bootstrap.get("departure_timezone"):
+            params = urlencode(
+                dict(
+                    origin=route["origin_iata"],
+                    destination=route["destination_iata"],
+                    clock="local",
+                    time_basis=basis,
+                )
+            )
+            available = json.loads(fetch("/v1/search-availability?" + params))
+            if (
+                not isinstance(available, dict)
+                or not available.get("dates")
+                or available.get("timezone") != bootstrap["departure_timezone"]
+                or available.get("origin") != route["origin_iata"]
+                or available.get("destination") != route["destination_iata"]
+            ):
+                raise ValueError("Airport-local calendar availability failed")
+            local_dates += "; sample calendar passed"
+        else:
+            local_dates += "; sample origin requires explicit UTC dates"
+    return {
+        "url": base_url,
+        "flight_count": None,
+        "route_search": "passed",
+        "local_dates": local_dates,
+    }
+
+
+def check(root: Path, *, public: bool = False):
+    require_private(root, directory=True)
+    require_private(root / "settings.json")
+    settings = read_settings(root)
+    base = f"https://{settings['hostname']}" if public else f"http://127.0.0.1:{settings['port']}"
+    result = probe(base, data_mode=settings["data_mode"])
+    evidence = (
+        f"{result['flight_count']} flights"
+        if result["flight_count"] is not None
+        else f"route search {result['route_search']} (counts available in the catalog)"
+    )
+    print(
+        f"Verified {'live' if public else 'locally'}: {base}/ · {settings['data_mode']} data · {evidence}"
+    )
+    if "local_dates" in result:
+        print(f"Airport-local dates: {result['local_dates']}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Manually control Flyji on this Mac.")
+    parser.add_argument(
+        "command", choices=["start", "stop", "status", "tunnel", "check", "monitoring"]
+    )
+    parser.add_argument("--public", action="store_true", help="verify the configured HTTPS domain")
+    parser.add_argument("--runtime-dir", type=Path)
+    parser.add_argument("--bobowatch-runtime-dir", type=Path)
+    args = parser.parse_args(argv)
+    if sys.platform != "darwin" or os.getuid() == 0:
+        parser.error("Run on macOS as your normal user, without sudo.")
+    if args.public and args.command != "check":
+        parser.error("--public is only used with check.")
+    if args.bobowatch_runtime_dir is not None and args.command not in ("start", "monitoring"):
+        parser.error("--bobowatch-runtime-dir is used with start or monitoring")
+    if args.command == "monitoring" and args.bobowatch_runtime_dir is None:
+        parser.error("monitoring requires --bobowatch-runtime-dir")
+    os.umask(0o077)
+    try:
+        root = args.runtime_dir.expanduser() if args.runtime_dir else runtime_root()
+        if not root.is_absolute():
+            raise ValueError("The runtime directory must be an absolute path.")
+        {
+            "start": lambda: start(root, watch_runtime=args.bobowatch_runtime_dir),
+            "monitoring": lambda: configure_monitoring(root, args.bobowatch_runtime_dir),
+            "stop": stop,
+            "status": lambda: status(root),
+            "tunnel": lambda: save_token(root),
+            "check": lambda: check(root, public=args.public),
+        }[args.command]()
+        if args.command == "monitoring":
+            print(
+                "Monitoring target saved. An enabled sender reloads it on its next delivery; restart if monitoring was disabled at startup."
+            )
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RuntimeError,
+        subprocess.SubprocessError,
+    ) as error:
+        parser.exit(1, f"Error: {error}\n")
+
+
+if __name__ == "__main__":
+    main()

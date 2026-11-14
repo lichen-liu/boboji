@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flight-routes-engine"
+version = "0.1.0"
+description = "Provider-neutral ingestion and route exploration for commercial flights"
+requires-python = ">=3.11"
+dependencies = [
+  "boboji-bobowatch-adapter @ https://github.com/lichen-liu/boboji/releases/download/bobowatch-adapter/v0.3.1/boboji_bobowatch_adapter-0.3.1-py3-none-any.whl#sha256=d6829810f53320fcc5b186912b9479579742a0d833e4513366de5451a2ff42a1",
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "pydantic-settings>=2.5,<3",
+  "uvicorn[standard]>=0.30,<1",
+  "tzdata==2026.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "ruff>=0.17,<1", "build>=1.3,<2", "timezonefinder==8.2.4"]
+producer = ["timezonefinder==8.2.4"]
+
+[project.scripts]
+flyji = "admin.client:main"
+flyji-ingest = "ingestion.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/core", "src/ingestion", "src/server", "src/admin"]
+
+[tool.hatch.build]
+dev-mode-dirs = ["src"]
+
+
+[tool.hatch.metadata]
+allow-direct-references = true

@@ -1,0 +1,200 @@
+# Run Flyji through Cloudflare
+
+From `boboji/projects/flightrepo/`, install the app and connector:
+
+```sh
+python3 installation/install.py
+brew install cloudflared
+```
+
+Use a current `cloudflared`; the private token-file option requires version
+2025.4.0 or later. [Downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/),
+[token-file support](https://developers.cloudflare.com/tunnel/reference/run-parameters/).
+
+1. In Cloudflare's dashboard, open **Networking → Tunnels** and create a separate,
+   remotely managed tunnel named **flyji**. Copy only its tunnel token, then save
+   it through the hidden terminal prompt:
+
+   ```sh
+   ./deployment/flyji tunnel
+   ```
+
+   The token stays in the private runtime, outside Git and command arguments.
+   Saving it does not start the connector.
+
+2. Start the installed app and connector, then check local operation:
+
+   ```sh
+   ./deployment/flyji start
+   ./deployment/flyji status
+   ./deployment/flyji check
+   ```
+
+3. In the tunnel's **Routes**, add a **Published application** route:
+
+   | Setting | Value |
+   |---|---|
+   | Hostname | `fly.boboji.fyi` |
+   | Service URL | `http://127.0.0.1:8014` |
+   | HTTP Host Header | `fly.boboji.fyi` |
+
+   Set the Host header under **Additional application settings → HTTP**. The
+   dashboard configures the hostname's DNS route; the header must agree with
+   Flyji's hostname validation.
+   [Tunnel setup](https://developers.cloudflare.com/tunnel/get-started/),
+   [origin parameters](https://developers.cloudflare.com/tunnel/reference/origin-parameters/).
+
+4. Check the actual public path and open **https://fly.boboji.fyi**:
+
+   ```sh
+   ./deployment/flyji check --public
+   ```
+
+   A running connector or passing local check alone does not establish that the
+   hostname works. Confirm it from another device or network as well.
+
+The application path is:
+
+```text
+Browser → Cloudflare HTTPS → cloudflared → Uvicorn/FastAPI at 127.0.0.1:8014
+```
+
+`check` exercises the local app, catalog and a synthetic YYZ → AMS → CDG query.
+`check --public` probes the configured HTTPS hostname instead. `status` reports the
+configured local port and URL, managed processes and private log location. The app
+serves the packaged frontend and read-only API; its database, logs and credentials are not web assets.
+
+macOS launchd supervises the two processes after an explicit `start`. It restarts
+an exited process; closing the terminal leaves them running. There is no login
+item or boot service. The Mac must stay awake, online and logged in. After logout
+or reboot, start Flyji manually again. Do not run `cloudflared service install`
+or `brew services start cloudflared` for this setup.
+
+To stop both processes and their automatic restart:
+
+```sh
+./deployment/flyji stop
+```
+
+This retains the runtime, token and hosted database. It does not remove the
+Cloudflare tunnel or DNS route. To replace the token, stop first, run `tunnel`,
+then start again. Update the app using the [installation instructions](../installation/README.md).
+
+Stop verifies that both launchd jobs have disappeared before reporting success.
+It allows up to 20 seconds after the unload requests for shutdown to finish. If
+confirmation fails, deployment stops before installation begins.
+
+The scripts do not configure Cloudflare resources, change DNS or install paid
+add-ons. Use the standard named HTTP tunnel and review the account's plan in the
+dashboard. If port 8014 is occupied, the controller refuses to start; it does not
+kill another process. Change a port only while stopped, and update both the
+private settings and the dashboard's service URL.
+
+This phase starts with twelve synthetic demo schedules in
+`REPO/var/hosted/flights.db`. It runs no provider fetcher and creates no real flight
+database. Fares and booking are outside the explorer. Anyone with access to the
+published hostname can query these demo records; customer validation and real-data
+deployment are later work.
+
+Real probes also report the bootstrap's airport timezone coverage. When the
+sample route's origin has a timezone, the probe checks its airport-local calendar
+availability and verifies the returned timezone. Otherwise it reports that the
+sample requires explicit UTC dates. Storage readiness remains independent of
+local-date coverage; the browser offers **Use UTC dates** for unresolved origins.
+Coverage comes from the airport dimension only, without an archive-wide flight
+count. Older servers without capability fields are reported as unknown.
+
+## Real itinerary serving
+
+Set `"data_mode": "real"` in the installed private `settings.json` and select an
+explicit absolute `database_path` under the project's ignored `var/hosted/`.
+Initialize that file with admin before installation/startup. Real mode validates
+the `flight-legs` schema, accepts an empty initialized dataset and rejects demo
+flight records; the seed step cannot insert demo data in this mode. Existing
+synthetic installations keep their default mode and original smoke checks.
+
+Install backend/frontend/admin together while the hosted jobs are stopped. Resume
+a compatible producer against its separate ingestion file; publish explicitly to
+the serving path. Never use an ingestion database as the serving file. `manage.py check` and `check --public`
+validate real readiness and a route from the actual dataset, rather than hardcoded
+demo airports/dates. `/health/ready` checks readable storage and exposes schema identity;
+admin `overview --json` reports the file path and same schema. Historical ADSB records use
+observed time bounds and partial coverage; they cannot supply future schedules.
+
+Read concurrency, SQL deadlines, index upgrades and repeatable load probes are
+described in [backend operations](../docs/backend-operations.md). Readiness no
+longer counts flights or selects a time basis; use `/v1/catalog` for those facts.
+
+Application overlays recorded in `installation.json` are verified before serving.
+Replacing the installed wheel while retaining an overlay receipt fails startup
+if it discards those fixes. Build subsequent deployments from a revision that
+includes both the ingestion changes and the application fixes, then use the
+installer to produce a fresh receipt. A successful readiness probe alone does
+not establish that the intended routing version is running.
+
+Browser asset URLs include a content hash for the complete frontend release.
+They update automatically when files change; HTML is served with `no-store`.
+The current and previous release are held in memory so a page loading during a
+static-file update can finish using consistent files. A server restart clears
+that history; an older page that has not finished loading may need a refresh.
+No manual version bump is required.
+
+The startup installation check has a three-minute deadline because it validates
+the serving schema/source identities and an end-to-end search and rebuild before
+loading either job. It prints each phase and elapsed time. Real checks select a
+route through `/v1/bootstrap?include_airports=false`, without requesting full
+archive aggregates. Local/public real probes use that same summary and verify
+route search; their output reports routing status. Exact counts remain available
+through `/v1/catalog`. Synthetic checks retain the demo catalog and constrained
+route validation. The installer also bounds each seed/check subprocess to three
+minutes; the preservation phase counts existing facts once.
+A failed or timed-out check leaves both jobs unloaded. This deadline applies to
+the deployment preflight, not to user route searches or their coverage. Startup
+readiness and ordinary HTTP probes retain a 20-second timeout. The catalog probe
+allows three minutes for a cold statistics refresh, including when ingestion
+publishes between checks and invalidates the cache. A catalog timeout still
+fails a synthetic deployment check; it does not shorten or truncate user searches.
+
+## Single-command deployment and optional monitoring
+
+`./deployment/flyji deploy` combines the existing stop/install/start/local-check
+sequence using the pinned adapter package. The optional `--bobowatch-runtime-dir PATH`
+provisions monitoring credentials at startup, and subsequent deployments
+reuse the saved registration. It never starts BoboWatch. Hosted monitoring remains
+opt-in. The separately installed BoboWatch collector provides RAM-disk quota/lifecycle controls;
+install its private runtime first, then enable this integration. See
+[the install/reinstall and rollout guide](../docs/monitoring.md) for the exact
+commands. This deployment restarts serving jobs, not the independent ingestion
+worker.
+
+
+Installation no longer reads BoboWatch runtime files or requires its API. The
+`--bobowatch-runtime-dir` option belongs to `start`, `deploy`, or `monitoring`,
+rather than the installer. Use `monitoring --bobowatch-runtime-dir PATH` to change
+an already-enabled sender live; enabling one that was disabled at process startup
+requires a restart. Saved local registrations are reused at later starts. Explicit
+endpoint/credential settings without a local registration are preserved.
+
+A failed install leaves the app stopped. A failed start or final deployment check
+unloads both jobs, preserving configuration, credentials and databases. Cleanup
+failures are reported rather than claiming the app is stopped. Deployment uses
+the current checkout; update it separately with `git pull`.
+
+## Consolidated source and private state
+
+Deploy from the merged Boboji checkout with `./deployment/flyji deploy`, then
+run `./deployment/flyji check` and `./deployment/flyji check --public`. The source
+move keeps the existing private runtime, port, hostname, tunnel, and monitoring
+endpoint. Source changes do not automatically deploy services.
+
+The hosted database is now under root `var/flightrepo/hosted/`, with its separate
+ingestion workspace under root `var/flightrepo/ingestion/`. The project's ignored
+`var` symlink preserves normal relative CLI paths. The legacy checkout's `var`
+link remains compatible with older saved commands. Stored ingestion authority
+must point to the canonical serving path while preserving both database identities.
+See [migration and recovery](../docs/migration.md) before changing these paths.
+
+Real-data deployment probes request one admitted direct itinerary and rebuild
+its selected leg. This bounds smoke-test work on large archives while preserving
+real-data routing verification. Interactive route searches retain their existing
+connection settings and budgets.

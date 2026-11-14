@@ -1,0 +1,9 @@
+{
+  "name": "flyji-browser-checks",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Development-only browser checks against the isolated fictional Flyji demo",
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

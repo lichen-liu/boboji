@@ -16,10 +16,12 @@ The single entry workflow retains those trigger rules and runs:
 - BoboWatch: its native unittest, Ruff, JavaScript, and isolated adapter wheel
   and source-distribution checks on Python 3.11 and 3.14, using Node 24.
 - BoboWatch browsers: fictional Chromium desktop and WebKit phone workflows.
+- Flyji: pytest, Ruff, installed package verification on Python 3.13 and 3.14.
+- Flyji browsers: Node unit tests and fictional Chromium/WebKit demo workflows.
 
-The existing pytest matrix waits for the BoboWatch jobs and runs even if a
-dependency fails. It explicitly fails unless both dependency jobs succeeded,
-so BoboWatch failure, cancellation, or an unexpected skip cannot produce a
+The existing pytest matrix waits for the BoboWatch and Flyji jobs and runs even if a
+dependency fails. It explicitly fails unless all four dependency jobs succeeded,
+so any project failure, cancellation, or an unexpected skip cannot produce a
 passing required check. Preserve this gate when adding projects.
 
 All checks run when requested. Do not path-filter away a required workflow.

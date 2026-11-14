@@ -1,0 +1,228 @@
+"""Interactive local record management and bounded read-only SQL inspection."""
+
+import sqlite3
+
+from core.connections import Airport
+from core.models import FlightRecord
+from core.prompts import ask
+from core.routing.models import DEFAULT_MAXIMUM_CONNECTION_MINUTES, RouteSearchRequest
+from core.storage import SQLiteConnection
+from ingestion.updater import FlightUpdater
+from server.reader import FlightReader
+
+
+def yes_no(label, default="n"):
+    while True:
+        value = ask(label + " (y/n)", default).lower()
+        if value in ("y", "yes", "n", "no"):
+            return value in ("y", "yes")
+        print("Enter y or n.")
+
+
+def create_airport(path, output):
+    print(f"Database: {path.resolve()}")
+    print("Type cancel at any prompt to discard the airport.")
+    fields = {
+        "iata": "IATA code (3 letters)",
+        "name": "Airport name",
+        "city_id": "City ID (reuse the existing ID for airports in the same city)",
+        "timezone": "IANA timezone (e.g. America/Toronto)",
+        "latitude": "Latitude (-90 to 90)",
+        "longitude": "Longitude (-180 to 180)",
+    }
+    data = {}
+    try:
+        while True:
+            data = {field: ask(label, data.get(field)) for field, label in fields.items()}
+            data["iata"] = data["iata"].upper()
+            try:
+                airport = Airport.model_validate(data)
+            except ValueError as error:
+                print(f"Invalid airport: {error}\nRe-enter the fields; Enter keeps a value.")
+                continue
+            break
+        print("Airport preview:")
+        output(airport)
+        if not yes_no(f"Save {airport.iata} to {path.resolve()}?"):
+            print("Airport discarded; no changes saved.")
+            return
+    except (EOFError, KeyboardInterrupt):
+        print("\nAirport creation cancelled; no changes saved.")
+        return
+    updater = FlightUpdater(path)
+    updater.initialize()
+    updater.create_airport(airport)
+    output({"created": airport.iata, "database": path})
+
+
+def edit_flight(path, provider, provider_id, output):
+    original = FlightReader(path).flight(provider, provider_id)
+    print(f"Database: {path.resolve()}")
+    output(original)
+    print("Enter keeps a field; '-' clears an optional field. Type cancel to discard.")
+    try:
+        while True:
+            data = original.model_dump(mode="json")
+            fields = (
+                "flight_number",
+                "airline_iata",
+                "origin_iata",
+                "destination_iata",
+                "departure_scheduled",
+                "arrival_scheduled",
+                "departure_actual",
+                "arrival_actual",
+                "status",
+                "codeshares",
+            )
+            if original.departure_observed_lower is not None:
+                fields = (
+                    *fields,
+                    "callsign",
+                    "departure_observed_lower",
+                    "departure_observed_upper",
+                    "arrival_observed_lower",
+                    "arrival_observed_upper",
+                )
+            if (
+                original.aircraft_type_code is not None
+                or original.departure_observed_lower is not None
+            ):
+                fields = (*fields, "aircraft_type_code")
+            for field in fields:
+                current = data.get(field)
+                default = ",".join(current) if field == "codeshares" else (current or "-")
+                value = ask(field, default)
+                if field == "codeshares":
+                    data[field] = (
+                        [] if value == "-" else [code.strip() for code in value.split(",")]
+                    )
+                elif field in (
+                    "flight_number",
+                    "airline_iata",
+                    "departure_scheduled",
+                    "arrival_scheduled",
+                    "departure_actual",
+                    "arrival_actual",
+                    "callsign",
+                    "aircraft_type_code",
+                ) or field.startswith(("departure_observed_", "arrival_observed_")):
+                    data[field] = None if value == "-" else value
+                else:
+                    data[field] = value
+            try:
+                replacement = FlightRecord.model_validate(data)
+            except ValueError as error:
+                print(f"Invalid flight: {error}\nRe-enter the fields.")
+                continue
+            break
+        output(replacement)
+        if not yes_no("Save these changes?"):
+            print("Changes discarded.")
+            return
+    except (EOFError, KeyboardInterrupt):
+        print("\nEdit cancelled; no changes saved.")
+        return
+    output({"updated": FlightUpdater(path).update(original, replacement)})
+
+
+def approve_flight(path, provider, provider_id, confirmed, output):
+    original = FlightReader(path).flight(provider, provider_id)
+    if original.itinerary_reviewed:
+        raise ValueError("This flight has already been manually reviewed")
+    if not (original.review_reasons or original.evidence_kind == "inferred_airport_proximity"):
+        raise ValueError("This flight has no itinerary uncertainty to review")
+    if not confirmed:
+        print(f"Database: {path.resolve()}")
+        output(original)
+        print("Check both airports and time bounds; use flight edit first for corrections.")
+        try:
+            if not yes_no("Mark this itinerary as manually reviewed?"):
+                print("Approval cancelled.")
+                return
+        except (EOFError, KeyboardInterrupt):
+            print("\nApproval cancelled.")
+            return
+    approved = original.model_copy(update={"itinerary_reviewed": True})
+    output({"approved": FlightUpdater(path).update(original, approved)})
+
+
+def delete_flight(path, provider, provider_id, confirmed, output):
+    original = FlightReader(path).flight(provider, provider_id)
+    if not confirmed:
+        print(f"Database: {path.resolve()}")
+        output(original)
+        try:
+            if not yes_no("Delete this flight?"):
+                print("Deletion cancelled.")
+                return
+        except (EOFError, KeyboardInterrupt):
+            print("\nDeletion cancelled.")
+            return
+    output({"deleted": FlightUpdater(path).delete(provider, provider_id, expected=original)})
+
+
+def query_database(path, sql, limit):
+    """Only allow SELECT operations, including CTEs, on any SQLite schema."""
+    if not 1 <= limit <= 1000:
+        raise ValueError("limit must be between 1 and 1000")
+
+    def authorize(action, arg1, arg2, database, trigger):
+        if action == sqlite3.SQLITE_FUNCTION and str(arg2).lower() == "load_extension":
+            return sqlite3.SQLITE_DENY
+        allowed = (
+            sqlite3.SQLITE_SELECT,
+            sqlite3.SQLITE_READ,
+            sqlite3.SQLITE_FUNCTION,
+            sqlite3.SQLITE_RECURSIVE,
+        )
+        return sqlite3.SQLITE_OK if action in allowed else sqlite3.SQLITE_DENY
+
+    with SQLiteConnection(path, read_only=True).connect() as connection:
+        connection.set_authorizer(authorize)
+        cursor = connection.execute(sql)
+        columns = [column[0] for column in cursor.description or ()]
+        rows = cursor.fetchmany(limit + 1)
+        connection.set_authorizer(None)
+    return {
+        "columns": columns,
+        "rows": [list(row) for row in rows[:limit]],
+        "truncated": len(rows) > limit,
+    }
+
+
+def route_request():
+    print("Search stored flights. Timestamps require Z or an offset; cancel aborts.")
+    while True:
+        try:
+            data = {
+                "origin": ask("Origin"),
+                "destination": ask("Destination"),
+                "departure_start": ask("Departure window start"),
+                "departure_end": ask("Departure window end (exclusive)"),
+                "horizon_end": ask("Arrival deadline"),
+                "via_airport": ask("Via airports in order (space separated; optional)", "-"),
+                "avoid_airports": ask("Avoid airports (space separated)", "-"),
+                "max_legs": ask("Maximum legs", "3"),
+                "minimum_connection_minutes": ask("Minimum connection minutes", "45"),
+                "maximum_connection_minutes": ask(
+                    "Maximum connection minutes", str(DEFAULT_MAXIMUM_CONNECTION_MINUTES)
+                ),
+                "ranking": ask(
+                    "Ranking: fewest_legs, shortest_elapsed, earliest_arrival", "fewest_legs"
+                ),
+                "limit": ask("Maximum results", "20"),
+                "allow_airport_change": yes_no("Allow same-city airport changes?"),
+            }
+            data["via_airport"] = (
+                None if data["via_airport"] == "-" else data["via_airport"].split()
+            )
+            data["avoid_airports"] = (
+                [] if data["avoid_airports"] == "-" else data["avoid_airports"].split()
+            )
+            return RouteSearchRequest.model_validate(data)
+        except (EOFError, KeyboardInterrupt):
+            print("\nSearch cancelled.")
+            return None
+        except ValueError as error:
+            print(f"Invalid request: {error}\nRe-enter the search.")

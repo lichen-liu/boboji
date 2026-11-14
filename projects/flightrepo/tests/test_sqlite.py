@@ -1,0 +1,155 @@
+import subprocess
+import sys
+
+import pytest
+from test_engine import flight
+
+from ingestion.updater import FlightUpdater
+from server.reader import FlightReader
+
+
+@pytest.mark.parametrize("basis", ["scheduled", "actual", "observed"])
+def test_arrival_windows_use_destination_index_on_existing_initialized_database(tmp_path, basis):
+    writer = FlightUpdater(tmp_path / "flights.db")
+    writer.initialize()
+    # Reproduce a database initialized before the additive index upgrade.
+    with writer.connect() as connection:
+        for name in ("scheduled", "actual", "observed"):
+            connection.execute(f"DROP INDEX flight_legs_{name}_destination")
+    writer.initialize()
+    with FlightReader(writer.path).connect() as connection:
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT arrival_lower_us,arrival_upper_us FROM searchable_legs "
+            "WHERE destination_iata=? AND time_basis=? AND arrival_lower_us>=?",
+            ("YYZ", basis, 0),
+        ).fetchall()
+        assert any(f"flight_legs_{basis}_destination" in row[3] for row in plan)
+        assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+
+
+def test_wal_reader_snapshot_during_separate_process_write(tmp_path):
+    updater = FlightUpdater(tmp_path / "flights.db")
+    updater.initialize()
+    store = FlightReader(updater.path)
+    record = flight(
+        "1", "AC1", "YYZ", "YUL", "2026-10-10T10:00:00+00:00", "2026-10-10T11:00:00+00:00"
+    )
+    updater.upsert([record])
+    with store.connect() as reader:
+        reader.execute("BEGIN")
+        assert reader.execute("SELECT COUNT(*) FROM flights").fetchone()[0] == 1
+        second = record.model_copy(update={"provider_id": "2"})
+        code = """import sys
+from pathlib import Path
+from core.models import FlightRecord
+from server.reader import FlightReader
+from ingestion.updater import FlightUpdater
+updater = FlightUpdater(Path(sys.argv[1]))
+updater.initialize()
+updater.upsert([FlightRecord.model_validate_json(sys.argv[2])])
+"""
+        subprocess.run(
+            [sys.executable, "-c", code, str(store.path), second.model_dump_json()],
+            check=True,
+            timeout=15,
+        )
+        assert reader.execute("SELECT COUNT(*) FROM flights").fetchone()[0] == 1
+    assert store.stats()["flights"] == 2
+    assert store.stats()["journal_mode"] == "wal"
+
+
+def test_failed_batch_leaves_existing_records_unchanged(tmp_path):
+    import pytest
+
+    updater = FlightUpdater(tmp_path / "flights.db")
+    updater.initialize()
+    store = FlightReader(updater.path)
+    record = flight(
+        "1", "AC1", "YYZ", "YUL", "2026-10-10T10:00:00+00:00", "2026-10-10T11:00:00+00:00"
+    )
+    updater.upsert([record])
+    with pytest.raises(ValueError):
+        updater.upsert(
+            [
+                record.model_copy(update={"provider_id": "2"}),
+                record.model_copy(update={"destination_iata": "YYZ"}),
+            ]
+        )
+    assert store.all_records() == [record]
+
+
+def test_reader_cannot_write_or_create_database(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    missing = tmp_path / "missing.db"
+    with pytest.raises(sqlite3.OperationalError):
+        FlightReader(missing).stats()
+    assert not missing.exists()
+    updater = FlightUpdater(tmp_path / "flights.db")
+    updater.initialize()
+    reader = FlightReader(updater.path)
+    assert not hasattr(reader, "upsert")
+    assert not hasattr(reader, "reset")
+    with reader.connect() as connection:
+        with pytest.raises(sqlite3.OperationalError):
+            connection.execute("DELETE FROM flights")
+
+
+def test_old_flight_database_migration_preserves_records_and_reader_compatibility(tmp_path):
+    import json
+
+    from core.storage import SCHEMA
+
+    updater = FlightUpdater(tmp_path / "old.db")
+    with updater.connect() as connection:
+        connection.executescript(SCHEMA.replace("    aircraft_type_code TEXT,\n", ""))
+    record = flight("1", "AC1", "YYZ", "YUL", "2026-10-10T10:00:00Z", "2026-10-10T11:00:00Z")
+    data = record.model_dump(mode="json")
+    data["codeshares"] = json.dumps(data["codeshares"])
+    with updater.connect() as connection:
+        connection.execute(
+            f"INSERT INTO flights ({', '.join(data)}) VALUES ({', '.join('?' for _ in data)})",
+            list(data.values()),
+        )
+    # Old read-only data files remain readable before an explicit writer migration.
+    assert FlightReader(updater.path).all_records() == [record]
+    updater.initialize()
+    updater.initialize()
+    assert FlightReader(updater.path).all_records() == [record]
+
+
+def test_mixed_type_codes_round_trip_and_unknown_keeps_legacy_shape(tmp_path):
+    updater = FlightUpdater(tmp_path / "mixed.db")
+    updater.initialize()
+    unknown = flight("1", "AC1", "YYZ", "YUL", "2026-10-10T10:00:00Z", "2026-10-10T11:00:00Z")
+    typed = unknown.model_copy(update={"provider_id": "2", "aircraft_type_code": "B738"})
+    updater.upsert([unknown, typed])
+    assert sorted(FlightReader(updater.path).all_records(), key=lambda f: f.provider_id) == [
+        unknown,
+        typed,
+    ]
+    assert "aircraft_type_code" not in unknown.model_dump()
+
+
+def test_serving_api_only_exposes_reads(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from server.api import app, get_store
+
+    updater = FlightUpdater(tmp_path / "flights.db")
+    updater.initialize()
+    app.dependency_overrides[get_store] = lambda: FlightReader(updater.path)
+    try:
+        with TestClient(app) as client:
+            assert (
+                client.get(
+                    "/v1/flights",
+                    params={"start": "2026-10-10T00:00:00Z", "end": "2026-10-11T00:00:00Z"},
+                ).json()
+                == []
+            )
+            assert client.post("/v1/admin/ingestions").status_code == 404
+    finally:
+        app.dependency_overrides.clear()

@@ -1,0 +1,153 @@
+# Flyji
+
+Explore dated flight options, inspect their routes and schedules, and change a connection to see how the rest of the journey changes. Flyji runs locally with Python, FastAPI and SQLite. Its intended domain is **fly.boboji.fyi**.
+
+Flyji shares boboji.fyi's fonts and branding with Trip Split and AeroRepo. Its route explorer uses a compact search strip, comparable journey cards and a linked route canvas. The interactive Earth sphere remains available through the visible **Route / Earth** switch. Fonts and map assets are bundled locally.
+
+This preview uses imported schedules. It does not establish seat availability, fares, booking protection or whether a transfer is suitable for a traveler. The demo data is synthetic; coverage is unknown.
+
+Source and operations now live in Boboji under `projects/flightrepo/`.
+Run the commands below from that project directory. Private state lives in
+root `var/flightrepo/` through the ignored project `var` symlink. See the
+[migration record](docs/migration.md) for history and production storage.
+
+## Try the demo
+
+```sh
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+python scripts/run_demo.py --port 8013
+```
+
+Open **http://127.0.0.1:8013/**. Choose airports and a departure date, then compare journey times and layovers. **More options** reveals route preferences; **Data & time settings** keeps clock and source settings available. Select a journey to inspect its route, switch to **Earth** for the globe, or open **Journey timeline** to scrub the schedule. Choose **Change connection** to rebuild later flights; **Undo** restores the previous journey. See the [demo walkthrough](docs/demo.md).
+
+The demo uses `var/connections-demo.db`, separate from the normal `var/flights.db`. Both files and their SQLite sidecars are ignored by Git. Stop the server with Ctrl+C. If the port is busy, choose another with `--port`.
+
+To host the installed preview at **fly.boboji.fyi**, follow [installation](installation/README.md) and [deployment](deployment/README.md). Hosted settings explicitly select synthetic or real serving; real mode uses the published flight-leg database under `var/hosted/` and never seeds demo data.
+
+## What works
+
+| Capability | Current behavior |
+|---|---|
+| Search | Typed airport codes with suggestions, ordered via airports, local or UTC departure dates, connection bounds, avoided airports and deterministic ranking |
+| Explore | Linked route list, globe/flat map, leg details, local clocks and a schedule cursor |
+| Edit | Keep a selected prefix, type the next airport, choose a later flight, rebuild subsequent legs, show dead ends and undo |
+| Airport changes | Opt-in, same-city changes with an explicit directed allowance in SQLite |
+| Inspect | Coverage and accuracy summaries, journey exports; full diagnostics/replay through local admin |
+| Manage data | Serving admin, separate producer CLI/API, explicit publication and guarded reset |
+
+Search defaults to **Any number** of stops. UTC/local search and connection-edit
+requests use `max_legs: null` (or omit it) for no stop-count limit; positive integers
+apply an optional explicit limit. Routes cannot revisit airports. Date windows and
+record/candidate budgets still bound computation, with partial results identified
+in the search diagnostics.
+
+Each connection defaults to a maximum wait of **7 days** (10,080 minutes).
+Change it in the browser's visible **Connection limit** field (days), with the CLI's
+`--max-connection MINUTES`, or through the API's `maximum_connection_minutes`.
+An explicit JSON `null` allows unlimited waits.
+
+## Architecture
+
+```text
+provider / CSV / tool API → ingestion.db → explicit publish → flights.db → API + web
+                               ↑                               ↑
+                       admin reads/clear/reset           serving admin edits
+```
+
+`src/core` defines the common flight/airport contract. `src/ingestion` owns
+producer jobs, private candidates/evidence and publication. `src/server` only
+reads serving facts. `src/admin` manages serving records and inspects ingestion
+through read-only connections, with explicit clear/reset as lifecycle exceptions.
+Boundary tests enforce package and database roles.
+
+The [ingestion pipeline reference](docs/ingestion.md) covers sources/licences,
+one-day extraction and measurements. Both databases use the same typed flight
+model, including aircraft type, while [publication](docs/database-schema.md#initialization-admin-and-publication)
+keeps held candidates, reference documents and pipeline state out of serving.
+The [producer workflow](docs/ingestion.md#interactive-jobs-and-resume) supports
+noncontiguous, overlapping jobs. Completed days skip downloads and stable source
+keys prevent duplicates. Use `python -m ingestion --db var/ingestion/ingestion.db`;
+`--db` always selects the private ingestion destination.
+
+SQLite requires no database service. WAL mode permits separate readers and one writer on the same machine; each calculation uses a consistent snapshot. Ingestion completes provider requests before writing. Routing uses bounded searches with explicit partial-result diagnostics; the [engine guide](docs/engine/routing.md) covers ranking, limits and replay.
+
+## Use your local data
+
+```sh
+cp .env.example .env
+python -m admin maintenance init
+uvicorn server.api:app --reload --host 127.0.0.1 --port 8001
+```
+
+The app is at `http://127.0.0.1:8001/`, interactive API docs at `/docs`, and the OpenAPI schema at `/openapi.json`. The API exposes queries and calculations; data changes go through the internal client. Public contracts use opaque flight IDs and exclude source/audit provenance; [the boundary](docs/database-schema.md#public-api-boundary) covers continuation requests and exports. Data credits are available at `/data-sources`. Use an absolute `FLIGHT_DATABASE_PATH` when running outside an editable checkout.
+
+Start the shell with `python -m admin` or `flyji`. Commands also work directly:
+
+Use `python -m admin --db /absolute/path/to/flights.db` to select a database, or `db PATH` to switch inside the shell. `db PATH --create` initializes a new Flyji database. See the [admin guide](docs/admin.md) for unified `flights` browsing, `flight show/edit/delete/approve`, airport catalog management, and `search` using prompts, flags, or request JSON. Secondary tools live under `maintenance`, `inspect`, and `debug`. Reads leave the database unchanged.
+
+Type `overview` in the shell (or run `python -m admin overview`) for a compact database summary: flights, distinct directed routes, airlines, airport catalog coverage, transfer rules, schedule range, fetch range, provider/status counts, and the five busiest routes by stored flight count. Stored-fact counts include cancelled and unreviewed candidates; searchable and
+review totals are separate. Use `overview --json` for structured output. It reads the database selected by `FLIGHT_DATABASE_PATH` without initializing or changing it; use `maintenance init` to initialize a database explicitly.
+
+```sh
+python -m admin import-json var/flights.json
+python -m admin airports import var/airports.json
+python -m admin export-json var/flights-export.json
+python -m admin airports export var/airport-catalog.json
+python -m ingestion --db var/ingestion/ingestion.db csv run --csv var/feed.csv --airports YYZ YUL --start 2026-10-17 --end 2026-10-18
+python -m admin flights --origin YYZ --start 2026-10-17T00:00:00Z --end 2026-10-18T00:00:00Z
+```
+
+Use `help` in the shell or `COMMAND --help` for options. JSON flight imports are arrays of `FlightRecord` objects; matching `(provider, provider_id)` records are updated and omitted records retained. Airport catalogs contain `airports` and optional directed `transfers`. Imports validate the entire batch before writing. CSV date bounds use UTC departure dates; timestamps require offsets. Keep working files under `var/`.
+
+To enter an entire route by hand, start `FLIGHT_DATABASE_PATH=/absolute/path/to/flights.db python -m admin` and type `create-route`. Enter the origin, then each leg's destination, flight number, departure and arrival timestamps (with `Z` or a timezone offset). Choose whether to add another leg; its origin is the previous destination. The command previews the complete route in UTC and asks before saving all legs together. Type `cancel` at any prompt or press Ctrl+C to discard it. Each saved flight receives a unique ID under provider `manual`. Routes are derived from the saved flights, rather than stored as named journeys; search connection limits still apply. You can also launch the wizard directly with `python -m admin create-route`.
+
+AeroDataBox ingestion requires `FLIGHT_PROVIDER_API_KEY`. Provider coverage, caching and redistribution rights must be checked for your account. Automatic refresh is not implemented; run producer jobs separately, then explicitly publish a date range while serving readers remain connected.
+
+```sh
+python -m admin maintenance clear-data --yes
+```
+
+`maintenance clear-data` clears flights, airport metadata, transfer rules and any observed itinerary facts/resume state transactionally, preserving the database schema and other files. It only permits databases under this project's `var/`. For an ingestion database, admin only allows reads and explicit clear/reset; clearing refuses an active job. See the producer workflow for publication.
+
+## Development checks
+
+```sh
+python -m pytest -q
+ruff check src tests scripts installation deployment
+ruff format --check src tests scripts installation deployment
+node --test tests/test_frontend.mjs tests/test_journey_visuals.mjs tests/test_route_projection.mjs tests/test_workspace_state.mjs tests/test_journey_detail.mjs tests/test_format_cache.mjs
+python -m build --wheel --outdir var/wheels
+python scripts/verify_package.py var/wheels/*.whl
+```
+
+The wheel check installs the built package in a temporary environment and probes its CLI, API and bundled assets from outside the checkout. It reuses the current environment's third-party dependencies.
+
+Archive fixtures use explicit gzip `mtime=0` and synthetic tar metadata, so
+regenerating the same input cannot change its identity with the wall clock.
+Compute fixture digests from the generated bytes rather than hard-coding hashes
+across Python/zlib versions. Clock regression tests simulate older Python gzip
+defaults and move time forward/backward without sleeping; changed inputs and
+same-size corrupt downloads must still fail the production integrity checks.
+CI runs the suite and installed-wheel checks on Python 3.13 and the deployed
+3.14 runtime. Randomized routing tests use explicit seeds, and archive/SQLite
+tests isolate their files in temporary directories.
+
+For browser tests, start the demo in another terminal, then run:
+
+```sh
+npm install --prefix var/browser-qa --no-save playwright@1.62.1
+var/browser-qa/node_modules/.bin/playwright install chromium webkit
+NODE_PATH=var/browser-qa/node_modules node scripts/qa_web.cjs
+NODE_PATH=var/browser-qa/node_modules FLYJI_QA_BROWSER=webkit node scripts/qa_web.cjs
+```
+
+Browser tests check search, editing, undo, error recovery, keyboard access and responsive use against the real API. They compare flight identities and constraints rather than saved screenshots or exact presentation strings. Failed cases save a screenshot under ignored `var/web-qa/`.
+
+The globe batches interaction updates into one draw per animation frame and renders
+country geometry in one SVG path. Versioned assets serve immutable releases from
+memory; only page requests and unknown releases scan for file changes. See
+[web performance notes](docs/web-performance.md) for the scope and local measurements.
+
+Keep generated reports, screenshots, replay files and build outputs under `var/`. GitHub uses label-triggered PR checks and automatic checks on `main`; see the [CI policy](../../.github/README.md).

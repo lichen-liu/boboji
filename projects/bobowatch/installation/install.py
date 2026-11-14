@@ -21,13 +21,35 @@ from bobowatch.provision import private_write, require_private  # noqa: E402
 from bobowatch.ramdisk import mount_path  # noqa: E402
 
 
+def source_identity(repo):
+    """Identify this project inside its containing Git worktree."""
+    repo = repo.resolve()
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
+
+    checkout = Path(git("rev-parse", "--show-toplevel")).resolve()
+    project = repo.relative_to(checkout).as_posix()
+    tree = "HEAD^{tree}" if project == "." else "HEAD:" + project
+    return checkout, {
+        "source_repository": "https://github.com/lichen-liu/boboji",
+        "source_project": project,
+        "source_commit": git("rev-parse", "HEAD"),
+        "source_tree": git("rev-parse", tree),
+        "uncommitted_changes": bool(git("status", "--porcelain", "--", ".")),
+    }
+
+
 def install(root, *, repo=REPO, ram_bytes=None, port=None):
     if ram_bytes is not None and (
         type(ram_bytes) is not int or ram_bytes < 1024**2 or ram_bytes % 512
     ):
         raise ValueError("RAM size must be at least one MiB and a whole multiple of 512 bytes")
-    if root.is_relative_to(repo):
+    checkout, receipt = source_identity(repo)
+    if root.resolve().is_relative_to(checkout):
         raise ValueError("Install outside the source checkout")
+    if receipt["uncommitted_changes"]:
+        raise ValueError("Commit project changes before installing a reproducible source snapshot")
     if root.exists() or root.is_symlink():
         require_private(root, directory=True)
     else:
@@ -115,8 +137,7 @@ def install(root, *, repo=REPO, ram_bytes=None, port=None):
             if p.is_file()
         }
         files["manage.py"] = hashlib.sha256((root / "manage.py").read_bytes()).hexdigest()
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
-        receipt = {"source_commit": commit, "files_sha256": files}
+        receipt["files_sha256"] = files
         private_write(root / "installation.json", (json.dumps(receipt, indent=2) + "\n").encode())
         (root / "installing").unlink()
     print("Installed BoboWatch at " + str(root))
